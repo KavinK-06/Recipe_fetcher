@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Saveur",
+    "slug": "saveur",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "saveur",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.saveur.app"
+    },
+    "android": {
+      "package": "com.saveur.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#1A0A0E"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#1A0A0E",
+          "resizeMode": "contain"
+        }
+      ],
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
