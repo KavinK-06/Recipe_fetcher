@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Dimensions,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,7 +30,9 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
-import { RECIPES, getRecipeById } from '../../constants/mockData';
+import { getRecipeById } from '../../constants/mockData';
+import { useRecipe } from '../../hooks/useRecipe';
+import { rowToUiRecipe, mockToUiRecipe } from '../../lib/recipes/uiRecipe';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
@@ -292,9 +295,16 @@ export default function CookModeScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
 
-  const recipe = getRecipeById(id) ?? RECIPES[0];
-  const COOK_STEPS = recipe.steps;
-  const recipeTitle = recipe.title;
+  // Real recipe (UUID) via RLS; otherwise fall back to mock so ids from the
+  // still-mock search/collections screens keep working.
+  const { recipe: row, isLoading } = useRecipe(id);
+  const recipe = useMemo(() => {
+    if (row) return rowToUiRecipe(row);
+    const mock = getRecipeById(id);
+    return mock ? mockToUiRecipe(mock) : null;
+  }, [row, id]);
+  const COOK_STEPS = recipe?.steps ?? [];
+  const recipeTitle = recipe?.title ?? '';
 
   const [stepIndex, setStepIndex] = useState(0);
   const [doneSteps, setDoneSteps] = useState<Set<number>>(new Set());
@@ -308,9 +318,9 @@ export default function CookModeScreen() {
 
   // Reset timer state when step changes
   useEffect(() => {
-    setTimerRemaining(currentStep.timerSeconds ?? 0);
+    setTimerRemaining(currentStep?.timerSeconds ?? 0);
     setTimerRunning(false);
-  }, [stepIndex, currentStep.timerSeconds]);
+  }, [stepIndex, currentStep?.timerSeconds]);
 
   // Tick timer
   useEffect(() => {
@@ -414,7 +424,7 @@ export default function CookModeScreen() {
   // ── Handlers ──
   const handleToggleTimer = () => {
     if (timerRemaining === 0) {
-      setTimerRemaining(currentStep.timerSeconds ?? 0);
+      setTimerRemaining(currentStep?.timerSeconds ?? 0);
       setTimerRunning(true);
       return;
     }
@@ -423,7 +433,7 @@ export default function CookModeScreen() {
 
   const handleResetTimer = () => {
     setTimerRunning(false);
-    setTimerRemaining(currentStep.timerSeconds ?? 0);
+    setTimerRemaining(currentStep?.timerSeconds ?? 0);
   };
 
   const handleMarkDone = () => {
@@ -442,6 +452,27 @@ export default function CookModeScreen() {
     Haptics.selectionAsync();
     router.back();
   };
+
+  // ── All hooks are declared above this line ──
+  if (isLoading && !recipe) {
+    return (
+      <SafeAreaView style={[styles.safe, styles.centered]} edges={['top']}>
+        <ActivityIndicator color={Colors.saffron} />
+      </SafeAreaView>
+    );
+  }
+  if (!recipe || totalSteps === 0) {
+    return (
+      <SafeAreaView style={[styles.safe, styles.centered]} edges={['top']}>
+        <Ionicons name="sad-outline" size={40} color={Colors.muted} />
+        <Text style={styles.notFoundTitle}>Nothing to cook</Text>
+        <Text style={styles.notFoundSub}>This recipe has no steps to follow.</Text>
+        <Pressable style={styles.notFoundButton} onPress={() => router.back()}>
+          <Text style={styles.notFoundButtonText}>Go back</Text>
+        </Pressable>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -507,8 +538,10 @@ export default function CookModeScreen() {
 
           <Text style={styles.instruction}>{currentStep.text}</Text>
 
-          {/* Ingredient callout */}
-          <IngredientCallout items={currentStep.ingredients} />
+          {/* Ingredient callout (mock recipes only carry per-step ingredients) */}
+          {currentStep.ingredients.length > 0 && (
+            <IngredientCallout items={currentStep.ingredients} />
+          )}
 
           {/* Timer (if any) */}
           {currentStep.timerSeconds != null && currentStep.timerSeconds > 0 && (
@@ -787,5 +820,37 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.muted,
     letterSpacing: 0.4,
+  },
+
+  // Loading / not-found
+  centered: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 32,
+  },
+  notFoundTitle: {
+    fontFamily: Fonts.displaySemiBold,
+    fontSize: 20,
+    color: Colors.parchment,
+    marginTop: 4,
+  },
+  notFoundSub: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 13,
+    color: Colors.muted,
+    textAlign: 'center',
+  },
+  notFoundButton: {
+    marginTop: 10,
+    backgroundColor: Colors.burgundy,
+    borderRadius: 50,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+  },
+  notFoundButtonText: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 14,
+    color: Colors.parchment,
   },
 });

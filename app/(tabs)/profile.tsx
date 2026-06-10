@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useAuth } from '@clerk/clerk-expo';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -21,10 +22,9 @@ import Animated, {
 import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
 import ProBadge from '../../components/ProBadge';
+import { useEntitlements } from '../../hooks/useEntitlements';
 
 const APP_VERSION = '1.0.0';
-const FREE_USED = 7;
-const FREE_LIMIT = 10;
 
 // ── Avatar ─────────────────────────────────────────────────────────────────────
 function Avatar({ initials }: { initials: string }) {
@@ -153,7 +153,20 @@ function SectionCard({ children }: { children: React.ReactNode }) {
 // ── Main screen ────────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const router = useRouter();
-  const [isPro] = useState(false);
+  const { signOut } = useAuth();
+  const { isLifetime, recipeCount, recipeLimit, showPaywall } = useEntitlements();
+
+  const handleSignOut = async () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    try {
+      await signOut();
+      // useProtectedRoute in the root layout will redirect to sign-in
+      // automatically once isSignedIn flips, but replace explicitly for snappier UX.
+      router.replace('/(auth)/sign-in');
+    } catch {
+      // No-op: signOut rarely fails, and the redirect hook is the safety net.
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -178,31 +191,31 @@ export default function ProfileScreen() {
           <View style={styles.identityText}>
             <Text style={styles.identityName}>Chef Kavin</Text>
             <Text style={styles.identityEmail}>kavinninja2006@gmail.com</Text>
-            {!isPro && (
+            {!isLifetime && (
               <View style={styles.freePlanRow}>
                 <Text style={styles.freePlanLabel}>Free Plan</Text>
               </View>
             )}
-            {isPro && (
+            {isLifetime && (
               <View style={styles.proPlanRow}>
                 <Ionicons name="star" size={11} color={Colors.noir} />
-                <Text style={styles.proPlanLabel}>Pro</Text>
+                <Text style={styles.proPlanLabel}>Lifetime</Text>
               </View>
             )}
           </View>
         </Animated.View>
 
         {/* ── Usage meter (free users only) ── */}
-        {!isPro && (
+        {!isLifetime && (
           <Animated.View entering={FadeInDown.delay(60).duration(280).springify()}>
-            <UsageMeter used={FREE_USED} limit={FREE_LIMIT} />
+            <UsageMeter used={recipeCount} limit={recipeLimit} />
           </Animated.View>
         )}
 
         {/* ── Upgrade CTA (free users only) ── */}
-        {!isPro && (
+        {!isLifetime && (
           <Animated.View entering={FadeInDown.delay(120).duration(280).springify()}>
-            <UpgradeCard onPress={() => {/* wire to paywall */}} />
+            <UpgradeCard onPress={() => showPaywall('lifetime')} />
           </Animated.View>
         )}
 
@@ -306,7 +319,7 @@ export default function ProfileScreen() {
             label="Sign Out"
             iconBg={`${Colors.paprika}22`}
             destructive
-            onPress={() => router.replace('/(auth)')}
+            onPress={handleSignOut}
             delay={440}
           />
         </SectionCard>

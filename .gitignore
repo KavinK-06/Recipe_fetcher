@@ -4,4 +4,37 @@
 
 expo-env.d.ts
 # @end expo-cli
-node_modules
+
+# Dependencies
+node_modules/
+
+# Expo build output
+dist/
+.expo/
+
+# Environment files — never commit secrets
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+supabase/.env
+supabase/functions/.env
+
+# Supabase CLI scratch (linked-project ref, pooler URL) — local only
+supabase/.temp/
+
+# macOS / iCloud duplicate-file cruft (" 2" suffixed copies)
+*\ 2.*
+.gitignore\ 2
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# Native build output (EAS builds these in CI)
+android/
+ios/

@@ -19,10 +19,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
-import { RECENT_RECIPES, GRID_RECIPES } from '../../constants/mockData';
+import { useRecipes } from '../../hooks/useRecipes';
+import type { RecipeRow } from '../../lib/api/import';
 import RecipeCard from '../../components/RecipeCard';
 import SkeletonCard from '../../components/SkeletonCard';
 import TagChip from '../../components/TagChip';
+
+const cookTimeLabel = (mins: number | null) => (mins != null ? `${mins} min` : '—');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = (SCREEN_WIDTH - 48 - 12) / 2;
@@ -113,18 +116,34 @@ function SectionHeader({
   );
 }
 
+// ── Empty state (no recipes imported yet) ───────────────────────────────────────
+function EmptyRecipes({ onImport }: { onImport: () => void }) {
+  return (
+    <View style={styles.empty}>
+      <View style={styles.emptyIcon}>
+        <Ionicons name="restaurant-outline" size={28} color={Colors.saffron} />
+      </View>
+      <Text style={styles.emptyTitle}>No recipes yet</Text>
+      <Text style={styles.emptySub}>
+        Import your first recipe from a link or YouTube video to start your collection.
+      </Text>
+      <Pressable style={styles.emptyButton} onPress={onImport}>
+        <Ionicons name="add" size={18} color={Colors.parchment} />
+        <Text style={styles.emptyButtonText}>Import a recipe</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 // ── Main screen ────────────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const router = useRouter();
-  const [savedIds, setSavedIds] = useState<Set<string>>(
-    new Set(
-      [...RECENT_RECIPES, ...GRID_RECIPES]
-        .filter((r) => r.isSaved)
-        .map((r) => r.id),
-    ),
-  );
+  const { recipes, isLoading } = useRecipes();
+  const recent = recipes.slice(0, 5);
+  const isEmpty = !isLoading && recipes.length === 0;
+
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [activeTag, setActiveTag] = useState('All');
-  const [isLoading] = useState(false);
 
   const toggleSave = (id: string) => {
     setSavedIds((prev) => {
@@ -213,14 +232,14 @@ export default function HomeScreen() {
           ) : (
             <FlatList
               horizontal
-              data={RECENT_RECIPES}
+              data={recent}
               keyExtractor={(r) => r.id}
-              renderItem={({ item }) => (
+              renderItem={({ item }: { item: RecipeRow }) => (
                 <RecipeCard
                   id={item.id}
                   title={item.title}
-                  imageUri={item.imageUri}
-                  cookTime={item.cookTime}
+                  imageUri={item.image_url ?? ''}
+                  cookTime={cookTimeLabel(item.cook_time_minutes)}
                   isSaved={savedIds.has(item.id)}
                   onPress={() => goToRecipe(item.id)}
                   onSavePress={toggleSave}
@@ -229,6 +248,9 @@ export default function HomeScreen() {
               )}
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.recentList}
+              ListEmptyComponent={
+                isEmpty ? <Text style={styles.recentEmpty}>Nothing here yet</Text> : null
+              }
             />
           )}
         </View>
@@ -272,15 +294,17 @@ export default function HomeScreen() {
                 <SkeletonCard key={i} style={styles.gridCard} />
               ))}
             </View>
+          ) : isEmpty ? (
+            <EmptyRecipes onImport={goToImport} />
           ) : (
             <View style={styles.grid}>
-              {GRID_RECIPES.map((item) => (
+              {recipes.map((item) => (
                 <RecipeCard
                   key={item.id}
                   id={item.id}
                   title={item.title}
-                  imageUri={item.imageUri}
-                  cookTime={item.cookTime}
+                  imageUri={item.image_url ?? ''}
+                  cookTime={cookTimeLabel(item.cook_time_minutes)}
                   isSaved={savedIds.has(item.id)}
                   onPress={() => goToRecipe(item.id)}
                   onSavePress={toggleSave}
@@ -480,5 +504,57 @@ const styles = StyleSheet.create({
   },
   gridCard: {
     width: CARD_WIDTH,
+  },
+
+  // Empty states
+  recentEmpty: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 13,
+    color: Colors.muted,
+    paddingHorizontal: 20,
+  },
+  empty: {
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 32,
+    paddingVertical: 28,
+  },
+  emptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.muted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  emptyTitle: {
+    fontFamily: Fonts.displaySemiBold,
+    fontSize: 18,
+    color: Colors.parchment,
+  },
+  emptySub: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: Colors.muted,
+    textAlign: 'center',
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.burgundy,
+    borderRadius: 50,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    marginTop: 6,
+  },
+  emptyButtonText: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 14,
+    color: Colors.parchment,
   },
 });

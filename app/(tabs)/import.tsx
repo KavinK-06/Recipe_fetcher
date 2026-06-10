@@ -9,6 +9,7 @@ import {
   Dimensions,
   Platform,
   Clipboard,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -33,6 +34,8 @@ import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
 import { RECIPES } from '../../constants/mockData';
 import ImportSourceButton from '../../components/ImportSourceButton';
+import { useImportRecipe } from '../../hooks/useImportRecipe';
+import { FreemiumLimitError, ImportError, type RecipeRow } from '../../lib/api/import';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -54,16 +57,54 @@ const RECENT_IMPORTS = RECIPES.slice(0, 3).map((r, i) => ({
   source: SOURCE_DOMAINS[i % SOURCE_DOMAINS.length],
 }));
 
-// Preview recipe shown in the success sheet — recipe id '1'
-const PREVIEW_RECIPE = {
-  id: '1',
-  title: RECIPES[0].title,
-  imageUri: RECIPES[0].imageUri,
-  cookTime: RECIPES[0].cookTime,
-  servings: `${RECIPES[0].defaultServings} servings`,
-  source: RECIPES[0].source,
-  tags: RECIPES[0].tags,
+// The shape the success sheet renders — mapped from the imported recipe row.
+type PreviewRecipe = {
+  id: string;
+  title: string;
+  imageUri?: string;
+  cookTime: string;
+  servings: string;
+  source: string;
+  tags: string[];
 };
+
+// Map a DB recipe row (snake_case, from the Edge Function) to the preview shape.
+function toPreview(r: RecipeRow): PreviewRecipe {
+  let source = r.source_type as string;
+  try {
+    if (r.source_url) source = new URL(r.source_url).hostname.replace(/^www\./, '');
+  } catch {
+    // keep source_type fallback
+  }
+  return {
+    id: r.id,
+    title: r.title,
+    imageUri: r.image_url ?? undefined,
+    cookTime: r.cook_time_minutes != null ? `${r.cook_time_minutes} min` : '—',
+    servings: r.servings != null ? `${r.servings} servings` : '',
+    source,
+    tags: r.tags ?? [],
+  };
+}
+
+// Turn a typed ImportError code into a friendly message for the alert.
+function importMessage(err: ImportError): string {
+  switch (err.code) {
+    case 'invalid_url':
+    case 'invalid_youtube_url':
+      return "That doesn't look like a valid link.";
+    case 'user_not_found':
+      return "Your account isn't set up yet. Try signing out and back in.";
+    case 'no_transcript':
+      return 'This video has no captions to read the recipe from.';
+    case 'extraction_failed':
+      return "Couldn't read a recipe from that link. Try a different one.";
+    case 'missing_supabase_url':
+      return 'App is misconfigured (missing Supabase URL).';
+    default:
+      return `Import failed (${err.status}). Please try again.`;
+  }
+}
 
 // ── URL input row ──────────────────────────────────────────────────────────────
 function UrlInputRow({
@@ -137,7 +178,7 @@ function LoadingOverlay({ url, onCancel }: { url: string; onCancel: () => void }
   const dotScale = useSharedValue(1);
 
   useEffect(() => {
-    // Animate progress 0 → 90% over ~2.5s, then slow trickle (simulated)
+    // Animate progress 0 → 90% over ~2.5s, then hold while the real request finishes
     progress.value = withTiming(0.9, { duration: 2500, easing: Easing.out(Easing.cubic) });
 
     // Pulse dot
@@ -231,11 +272,13 @@ function SkeletonShimmer({ style }: { style?: any }) {
 // ── Success sheet ──────────────────────────────────────────────────────────────
 function SuccessSheet({
   visible,
+  recipe,
   onSave,
   onDiscard,
   onView,
 }: {
   visible: boolean;
+  recipe: PreviewRecipe | null;
   onSave: () => void;
   onDiscard: () => void;
   onView: () => void;
@@ -261,7 +304,7 @@ function SuccessSheet({
     opacity: overlayOpacity.value,
   }));
 
-  if (!visible) return null;
+  if (!visible || !recipe) return null;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
@@ -286,39 +329,51 @@ function SuccessSheet({
           <View style={{ flex: 1 }}>
             <Text style={styles.successTitle}>Recipe imported</Text>
             <Text style={styles.successSub} numberOfLines={1}>
-              From {PREVIEW_RECIPE.source}
+              From {recipe.source}
             </Text>
           </View>
         </View>
 
         {/* Recipe preview card */}
         <Pressable onPress={onView} style={styles.previewCard}>
-          <Image
-            source={{ uri: PREVIEW_RECIPE.imageUri }}
-            contentFit="cover"
-            transition={300}
-            style={styles.previewImage}
-          />
+          {recipe.imageUri ? (
+            <Image
+              source={{ uri: recipe.imageUri }}
+              contentFit="cover"
+              transition={300}
+              style={styles.previewImage}
+            />
+          ) : (
+            <View style={[styles.previewImage, styles.previewImageEmpty]}>
+              <Ionicons name="restaurant-outline" size={28} color={Colors.muted} />
+            </View>
+          )}
           {/* Cook time badge */}
           <View style={styles.previewBadge}>
             <Ionicons name="time-outline" size={11} color={Colors.noir} />
-            <Text style={styles.previewBadgeText}>{PREVIEW_RECIPE.cookTime}</Text>
+            <Text style={styles.previewBadgeText}>{recipe.cookTime}</Text>
           </View>
           {/* Title block */}
           <View style={styles.previewBody}>
-            <Text style={styles.previewTitle}>{PREVIEW_RECIPE.title}</Text>
+            <Text style={styles.previewTitle}>{recipe.title}</Text>
             <View style={styles.previewMetaRow}>
-              <Text style={styles.previewMeta}>{PREVIEW_RECIPE.servings}</Text>
-              <View style={styles.previewMetaDot} />
-              <Text style={styles.previewMeta}>{PREVIEW_RECIPE.cookTime}</Text>
+              {recipe.servings ? (
+                <>
+                  <Text style={styles.previewMeta}>{recipe.servings}</Text>
+                  <View style={styles.previewMetaDot} />
+                </>
+              ) : null}
+              <Text style={styles.previewMeta}>{recipe.cookTime}</Text>
             </View>
-            <View style={styles.previewTagRow}>
-              {PREVIEW_RECIPE.tags.map((t) => (
-                <View key={t} style={styles.previewTag}>
-                  <Text style={styles.previewTagText}>{t}</Text>
-                </View>
-              ))}
-            </View>
+            {recipe.tags.length > 0 ? (
+              <View style={styles.previewTagRow}>
+                {recipe.tags.slice(0, 4).map((t) => (
+                  <View key={t} style={styles.previewTag}>
+                    <Text style={styles.previewTagText}>{t}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
           </View>
         </Pressable>
 
@@ -397,28 +452,46 @@ export default function ImportScreen() {
   const [url, setUrl] = useState('');
   const [focused, setFocused] = useState(false);
   const [state, setState] = useState<ImportState>('idle');
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [imported, setImported] = useState<RecipeRow | null>(null);
+  const cancelledRef = useRef(false);
 
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, []);
+  const { mutateAsync } = useImportRecipe();
 
-  const startFetch = (sourceUrl: string) => {
-    if (!sourceUrl.trim()) {
+  const startFetch = async (sourceUrl: string) => {
+    const trimmed = sourceUrl.trim();
+    if (!trimmed) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setUrl(sourceUrl);
+    setUrl(trimmed);
+    setImported(null);
+    cancelledRef.current = false;
     setState('loading');
 
-    // Simulate fetch
-    timeoutRef.current = setTimeout(() => {
+    try {
+      const recipe = await mutateAsync(trimmed);
+      if (cancelledRef.current) return;
+      setImported(recipe);
       setState('success');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }, 2800);
+    } catch (err) {
+      if (cancelledRef.current) return;
+      setState('idle');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      if (err instanceof FreemiumLimitError) {
+        Alert.alert(
+          'Free limit reached',
+          "You've used all 10 free imports. Upgrade to Pro for unlimited recipes.",
+        );
+      } else {
+        const msg =
+          err instanceof ImportError
+            ? importMessage(err)
+            : 'Something went wrong. Please check your connection and try again.';
+        Alert.alert('Import failed', msg);
+      }
+    }
   };
 
   const handlePaste = async () => {
@@ -433,32 +506,38 @@ export default function ImportScreen() {
     }
   };
 
-  const handleSocial = (source: string) => {
-    // In real app these would open share sheets; here we mock-fetch with a sample URL
-    startFetch(`https://${source}/recipe/sample`);
+  const handleSocial = (_source?: string) => {
+    // Social/photo import isn't wired to the backend — guide the user to the URL box.
+    // (YouTube works too: paste the video link above.)
+    Haptics.selectionAsync();
+    Alert.alert(
+      'Paste a link',
+      'Paste a recipe URL or YouTube link in the box above to import it.',
+    );
   };
 
   const handleSave = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const id = imported?.id;
     setState('idle');
     setUrl('');
-    // Navigate to recipe detail
-    router.push(`/recipe/${PREVIEW_RECIPE.id}` as any);
+    if (id) router.push(`/recipe/${id}` as any);
   };
 
   const handleDiscard = () => {
     Haptics.selectionAsync();
     setState('idle');
     setUrl('');
+    setImported(null);
   };
 
   const handleView = () => {
-    router.push(`/recipe/${PREVIEW_RECIPE.id}` as any);
+    if (imported?.id) router.push(`/recipe/${imported.id}` as any);
   };
 
   const handleCancel = () => {
     Haptics.selectionAsync();
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    cancelledRef.current = true;
     setState('idle');
   };
 
@@ -573,6 +652,7 @@ export default function ImportScreen() {
       {/* ── Success bottom sheet ── */}
       <SuccessSheet
         visible={state === 'success'}
+        recipe={imported ? toPreview(imported) : null}
         onSave={handleSave}
         onDiscard={handleDiscard}
         onView={handleView}
@@ -921,6 +1001,11 @@ const styles = StyleSheet.create({
   previewImage: {
     width: '100%',
     height: 160,
+  },
+  previewImageEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
   },
   previewBadge: {
     position: 'absolute',

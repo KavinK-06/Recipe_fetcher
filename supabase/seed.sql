@@ -1,0 +1,8 @@
+-- Seed data for local Supabase development.
+--
+-- This file is run by `supabase db reset` after the migrations apply.
+-- Production data is never touched.
+--
+-- Intentionally empty: the schema's default-subscription trigger handles
+-- per-user setup, and Clerk webhooks populate `public.users` on real sign-ups.
+-- Add fixture rows here once we need them for local-only development flows.

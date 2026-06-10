@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Dimensions,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,7 +27,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
-import { RECIPES, getRecipeById } from '../../constants/mockData';
+import { getRecipeById } from '../../constants/mockData';
+import { useRecipe } from '../../hooks/useRecipe';
+import { useRecipeImage } from '../../hooks/useRecipeImage';
+import { useRecipeSummary } from '../../hooks/useRecipeSummary';
+import { rowToUiRecipe, mockToUiRecipe, type UiRecipe } from '../../lib/recipes/uiRecipe';
 import TagChip from '../../components/TagChip';
 import IngredientRow from '../../components/IngredientRow';
 import StepCard from '../../components/StepCard';
@@ -34,9 +39,6 @@ import StepCard from '../../components/StepCard';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HERO_HEIGHT = 380;
 const TOP_BAR_PADDING = 12;
-
-// Fallback if an unknown id is passed
-const FALLBACK_RECIPE = RECIPES[0];
 
 type Tab = 'ingredients' | 'steps';
 
@@ -244,19 +246,82 @@ function StartCookingButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+// ── AI summary card ──────────────────────────────────────────────────────────
+function RecipeSummaryCard({
+  text,
+  canGenerate,
+  isLoading,
+  hasError,
+  onGenerate,
+}: {
+  text: string | null;
+  canGenerate: boolean;
+  isLoading: boolean;
+  hasError: boolean;
+  onGenerate: () => void;
+}) {
+  return (
+    <View style={styles.summaryCard}>
+      <View style={styles.summaryHeader}>
+        <Ionicons name="sparkles-outline" size={13} color={Colors.saffron} />
+        <Text style={styles.summaryLabel}>AI Summary</Text>
+      </View>
+      {text ? (
+        <Text style={styles.summaryText}>{text}</Text>
+      ) : isLoading ? (
+        <View style={styles.summaryRow}>
+          <ActivityIndicator color={Colors.saffron} size="small" />
+          <Text style={styles.summaryHint}>Generating…</Text>
+        </View>
+      ) : canGenerate ? (
+        <Pressable style={styles.summaryButton} onPress={onGenerate}>
+          <Ionicons name="sparkles" size={14} color={Colors.parchment} />
+          <Text style={styles.summaryButtonText}>
+            {hasError ? 'Try again' : 'Generate summary'}
+          </Text>
+        </Pressable>
+      ) : null}
+      {hasError && !isLoading ? (
+        <Text style={styles.summaryError}>Couldn’t generate a summary just now.</Text>
+      ) : null}
+    </View>
+  );
+}
+
 // ── Main screen ────────────────────────────────────────────────────────────────
 export default function RecipeDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
 
-  const RECIPE = getRecipeById(id) ?? FALLBACK_RECIPE;
+  // Real recipe (UUID) via RLS; otherwise fall back to a mock recipe so ids
+  // arriving from the still-mock search/collections screens keep working.
+  const { recipe: row, isLoading, error: recipeError } = useRecipe(id);
+  const RECIPE: UiRecipe | null = useMemo(() => {
+    if (row) return rowToUiRecipe(row);
+    const mock = getRecipeById(id);
+    return mock ? mockToUiRecipe(mock) : null;
+  }, [row, id]);
 
-  const [servings, setServings] = useState(RECIPE.defaultServings);
+  // Hero image: signed URL for stored copies, origin image_url while it loads /
+  // for mock recipes (the hook is disabled when the id isn't a real recipe).
+  const { url: storedImageUrl } = useRecipeImage(RECIPE?.isReal ? RECIPE.id : undefined);
+  const heroImageUrl = storedImageUrl ?? RECIPE?.imageUrl ?? undefined;
+
+  const summary = useRecipeSummary();
+  const summaryText = summary.data ?? RECIPE?.aiSummary ?? null;
+
+  const [servings, setServings] = useState(1);
   const [activeTab, setActiveTab] = useState<Tab>('ingredients');
   const [isSaved, setIsSaved] = useState(true);
   const [checkedIngredients, setCheckedIngredients] = useState<Set<string>>(new Set());
   const [activeStep, setActiveStep] = useState(0);
+
+  // Sync the servings adjuster to the recipe's default once it loads / changes.
+  useEffect(() => {
+    if (RECIPE) setServings(RECIPE.servings);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [RECIPE?.id]);
 
   const scrollY = useSharedValue(0);
 
@@ -310,14 +375,43 @@ export default function RecipeDetailScreen() {
     ),
   }));
 
-  // Live-scaled ingredients
+  // Live-scaled ingredients. Quantities that aren't numeric (e.g. "a pinch")
+  // are shown verbatim and not scaled.
   const scaledIngredients = useMemo(() => {
-    const factor = servings / RECIPE.defaultServings;
+    if (!RECIPE) return [];
+    const factor = RECIPE.servings > 0 ? servings / RECIPE.servings : 1;
     return RECIPE.ingredients.map((ing) => ({
       ...ing,
-      scaledQuantity: ing.quantity * factor,
+      scaledLabel:
+        ing.quantityNum != null ? formatQuantity(ing.quantityNum * factor) : ing.quantityRaw,
     }));
-  }, [servings]);
+  }, [servings, RECIPE]);
+
+  // ── All hooks are declared above this line ──
+  if (isLoading && !RECIPE) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator color={Colors.saffron} />
+      </View>
+    );
+  }
+  if (!RECIPE) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <Ionicons name="sad-outline" size={40} color={Colors.muted} />
+        <Text style={styles.notFoundTitle}>Recipe not found</Text>
+        <Text style={styles.notFoundSub}>
+          {recipeError
+            ? `Read error: ${recipeError.message}`
+            : 'No rows returned — if imports work but recipes won’t load, the Clerk ↔ Supabase auth bridge isn’t configured (see README).'}
+        </Text>
+        <Text style={styles.notFoundDebug}>id: {String(id)}</Text>
+        <Pressable style={styles.notFoundButton} onPress={() => router.back()}>
+          <Text style={styles.notFoundButtonText}>Go back</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   const toggleIngredient = (id: string) => {
     setCheckedIngredients((prev) => {
@@ -340,6 +434,19 @@ export default function RecipeDetailScreen() {
   const handleStartCooking = () => {
     router.push(`/cook/${RECIPE.id}` as any);
   };
+
+  // Meta chips: only those the recipe actually has (the DB stores none of
+  // difficulty/cuisine and may have null times).
+  const metaItems = [
+    RECIPE.cookTimeLabel ? { icon: 'time-outline', label: RECIPE.cookTimeLabel } : null,
+    RECIPE.prepTimeLabel
+      ? { icon: 'hourglass-outline', label: `${RECIPE.prepTimeLabel} prep` }
+      : null,
+    RECIPE.difficulty ? { icon: 'restaurant-outline', label: RECIPE.difficulty } : null,
+  ].filter(Boolean) as {
+    icon: React.ComponentProps<typeof Ionicons>['name'];
+    label: string;
+  }[];
 
   return (
     <View style={styles.container}>
@@ -399,7 +506,7 @@ export default function RecipeDetailScreen() {
         <View style={styles.heroContainer}>
           <Animated.View style={[styles.heroImageWrap, heroAnimStyle]}>
             <Image
-              source={{ uri: RECIPE.imageUri }}
+              source={heroImageUrl ? { uri: heroImageUrl } : undefined}
               contentFit="cover"
               transition={400}
               style={styles.heroImage}
@@ -411,10 +518,18 @@ export default function RecipeDetailScreen() {
               style={styles.heroGradient}
             />
             {/* Source badge */}
-            <View style={[styles.sourceBadge, { top: insets.top + 70 }]}>
-              <Ionicons name="link-outline" size={11} color={Colors.saffron} />
-              <Text style={styles.sourceText}>{RECIPE.source}</Text>
-            </View>
+            {RECIPE.sourceLabel ? (
+              <View style={[styles.sourceBadge, { top: insets.top + 70 }]}>
+                <Ionicons
+                  name={RECIPE.sourceType === 'youtube' ? 'logo-youtube' : 'link-outline'}
+                  size={11}
+                  color={Colors.saffron}
+                />
+                <Text style={styles.sourceText} numberOfLines={1}>
+                  {RECIPE.sourceLabel}
+                </Text>
+              </View>
+            ) : null}
           </Animated.View>
         </View>
 
@@ -423,35 +538,48 @@ export default function RecipeDetailScreen() {
           {/* Title + meta */}
           <View style={styles.titleBlock}>
             <Text style={styles.title}>{RECIPE.title}</Text>
-            <View style={styles.metaRow}>
-              <View style={styles.metaItem}>
-                <Ionicons name="time-outline" size={13} color={Colors.saffron} />
-                <Text style={styles.metaText}>{RECIPE.cookTime}</Text>
+            {metaItems.length > 0 && (
+              <View style={styles.metaRow}>
+                {metaItems.map((m, i) => (
+                  <React.Fragment key={m.label}>
+                    {i > 0 && <View style={styles.metaDivider} />}
+                    <View style={styles.metaItem}>
+                      <Ionicons name={m.icon} size={13} color={Colors.saffron} />
+                      <Text style={styles.metaText}>{m.label}</Text>
+                    </View>
+                  </React.Fragment>
+                ))}
               </View>
-              <View style={styles.metaDivider} />
-              <View style={styles.metaItem}>
-                <Ionicons name="hourglass-outline" size={13} color={Colors.saffron} />
-                <Text style={styles.metaText}>{RECIPE.prepTime} prep</Text>
-              </View>
-              <View style={styles.metaDivider} />
-              <View style={styles.metaItem}>
-                <Ionicons name="restaurant-outline" size={13} color={Colors.saffron} />
-                <Text style={styles.metaText}>{RECIPE.difficulty}</Text>
-              </View>
-            </View>
+            )}
           </View>
 
           {/* Tag chips */}
-          <View style={styles.tagRow}>
-            <TagChip label={RECIPE.cuisine} variant="cuisine" />
-            {RECIPE.tags.map((t) => (
-              <TagChip
-                key={t}
-                label={t}
-                variant={t === 'Vegetarian' || t === 'Vegan' ? 'dietary' : 'default'}
-              />
-            ))}
-          </View>
+          {(RECIPE.cuisine || RECIPE.tags.length > 0) && (
+            <View style={styles.tagRow}>
+              {RECIPE.cuisine ? <TagChip label={RECIPE.cuisine} variant="cuisine" /> : null}
+              {RECIPE.tags.map((t) => (
+                <TagChip
+                  key={t}
+                  label={t}
+                  variant={t === 'Vegetarian' || t === 'Vegan' ? 'dietary' : 'default'}
+                />
+              ))}
+            </View>
+          )}
+
+          {/* AI summary (real recipes only; mock recipes have no ai_summary) */}
+          {(RECIPE.isReal || summaryText) && (
+            <RecipeSummaryCard
+              text={summaryText}
+              canGenerate={RECIPE.isReal}
+              isLoading={summary.isPending}
+              hasError={summary.isError}
+              onGenerate={() => {
+                Haptics.selectionAsync();
+                summary.mutate(RECIPE.id);
+              }}
+            />
+          )}
 
           {/* Servings adjuster */}
           <ServingsAdjuster servings={servings} onChange={setServings} />
@@ -473,7 +601,7 @@ export default function RecipeDetailScreen() {
               {scaledIngredients.map((ing) => (
                 <IngredientRow
                   key={ing.id}
-                  quantity={formatQuantity(ing.scaledQuantity)}
+                  quantity={ing.scaledLabel}
                   unit={ing.unit}
                   name={ing.name}
                   isChecked={checkedIngredients.has(ing.id)}
@@ -814,5 +942,102 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.parchment,
     letterSpacing: 0.3,
+  },
+
+  // AI summary card
+  summaryCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.muted,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  summaryLabel: {
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 11,
+    color: Colors.saffron,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  summaryText: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 14,
+    lineHeight: 21,
+    color: Colors.parchment,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  summaryHint: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 13,
+    color: Colors.muted,
+  },
+  summaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 8,
+    backgroundColor: Colors.burgundy,
+    borderRadius: 50,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  summaryButtonText: {
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 13,
+    color: Colors.parchment,
+  },
+  summaryError: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 12,
+    color: Colors.paprika,
+  },
+
+  // Loading / not-found
+  centered: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 32,
+  },
+  notFoundTitle: {
+    fontFamily: Fonts.displaySemiBold,
+    fontSize: 20,
+    color: Colors.parchment,
+    marginTop: 4,
+  },
+  notFoundSub: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 13,
+    color: Colors.muted,
+    textAlign: 'center',
+  },
+  notFoundDebug: {
+    fontFamily: Fonts.monoRegular,
+    fontSize: 10,
+    color: Colors.muted,
+    opacity: 0.6,
+  },
+  notFoundButton: {
+    marginTop: 10,
+    backgroundColor: Colors.burgundy,
+    borderRadius: 50,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+  },
+  notFoundButtonText: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 14,
+    color: Colors.parchment,
   },
 });

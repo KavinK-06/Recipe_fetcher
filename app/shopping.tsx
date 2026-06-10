@@ -23,6 +23,7 @@ import { Colors } from '../constants/colors';
 import { Fonts } from '../constants/fonts';
 import IngredientRow from '../components/IngredientRow';
 import ProBadge from '../components/ProBadge';
+import { useEntitlements } from '../hooks/useEntitlements';
 
 // ── Mock data ──────────────────────────────────────────────────────────────────
 type ShoppingItem = {
@@ -185,8 +186,8 @@ function AddFromRecipeButton({ onPress }: { onPress: () => void }) {
 // ── Main screen ────────────────────────────────────────────────────────────────
 export default function ShoppingScreen() {
   const router = useRouter();
-  // Toggle this to test the locked vs unlocked state
-  const [isPro] = useState(false);
+  // Shopping List is a Lifetime (non-consumable) feature.
+  const { isLifetime, showPaywall } = useEntitlements();
   const [groups, setGroups] = useState<ShoppingGroup[]>(INITIAL_GROUPS);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(
     Object.fromEntries(INITIAL_GROUPS.map((g) => [g.category, true])),
@@ -310,9 +311,9 @@ export default function ShoppingScreen() {
           <AddFromRecipeButton onPress={() => router.push('/(tabs)/collections' as any)} />
         </View>
 
-        {/* Pro gate — layered on top of everything when free */}
-        {!isPro && (
-          <ProGate onUpgrade={() => {/* wire to paywall */}} />
+        {/* Pro gate — layered on top of everything when not unlocked */}
+        {!isLifetime && (
+          <ProGate onUpgrade={() => showPaywall('lifetime')} />
         )}
       </View>
     </SafeAreaView>

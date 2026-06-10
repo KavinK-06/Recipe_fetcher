@@ -4,6 +4,7 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '@clerk/clerk-expo';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -115,6 +116,13 @@ function TabIcon({
 // ── Tabs layout ────────────────────────────────────────────────────────────────
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
+  const { isLoaded, isSignedIn } = useAuth();
+
+  // Defense in depth: even if the redirect hook in the root layout hasn't
+  // fired yet, never render tabs UI for a signed-out user.
+  if (!isLoaded || !isSignedIn) {
+    return null;
+  }
 
   return (
     <Tabs

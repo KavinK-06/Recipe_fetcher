@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack } from 'expo-router';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
@@ -21,43 +22,64 @@ import {
   JetBrainsMono_500Medium,
   JetBrainsMono_700Bold,
 } from '@expo-google-fonts/jetbrains-mono';
+import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { Colors } from '../constants/colors';
+import { tokenCache } from '../lib/auth/tokenCache';
+import { useProtectedRoute } from '../hooks/useProtectedRoute';
+import { PaywallProvider } from '../components/PaywallProvider';
 
 SplashScreen.preventAutoHideAsync();
 
-// Stub flags — flip to false to walk through onboarding/auth flows
-const useIsAuthenticated = (): boolean => true;
-const useHasCompletedOnboarding = (): boolean => true;
+// One client for the app's lifetime; drives TanStack Query caching/mutations.
+const queryClient = new QueryClient();
 
-function AuthGate() {
-  const router = useRouter();
-  const segments = useSegments();
-  const isAuthenticated = useIsAuthenticated();
-  const hasOnboarded = useHasCompletedOnboarding();
+function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
+  const { isLoaded: clerkLoaded } = useAuth();
+
+  useProtectedRoute();
 
   useEffect(() => {
-    const firstSegment = segments[0] as string | undefined;
-    const inOnboarding = firstSegment === '(onboarding)';
-    const inAuth = firstSegment === '(auth)';
-    const inProtected = firstSegment === '(tabs)' || firstSegment === 'recipe' || firstSegment === 'cook' || firstSegment === 'shopping';
-
-    if (!hasOnboarded && !inOnboarding) {
-      router.replace('/(onboarding)');
-      return;
+    if (fontsReady && clerkLoaded) {
+      SplashScreen.hideAsync();
     }
+  }, [fontsReady, clerkLoaded]);
 
-    if (hasOnboarded && !isAuthenticated && inProtected) {
-      router.replace('/(auth)');
-      return;
-    }
+  // Hold the tree until fonts AND Clerk are both ready so we never flash a
+  // wrong-state screen before the redirect hook fires.
+  if (!fontsReady || !clerkLoaded) {
+    return null;
+  }
 
-    if (hasOnboarded && isAuthenticated && (inOnboarding || inAuth)) {
-      router.replace('/(tabs)');
-    }
-  }, [segments, isAuthenticated, hasOnboarded, router]);
-
-  return null;
+  return (
+    // GestureHandlerRootView must wrap the whole app or any GestureDetector
+    // (e.g. cook mode's swipe-between-steps) throws at render time.
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <PaywallProvider>
+          <View style={{ flex: 1, backgroundColor: Colors.noir }}>
+            <StatusBar style="light" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: Colors.noir },
+                animation: 'fade',
+              }}
+            >
+              <Stack.Screen name="(onboarding)" />
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="recipe/[id]" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="cook/[id]" options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="shopping" options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="collections/[id]" options={{ animation: 'slide_from_right' }} />
+            </Stack>
+          </View>
+        </PaywallProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
 }
 
 export default function RootLayout() {
@@ -74,37 +96,16 @@ export default function RootLayout() {
     JetBrainsMono_700Bold,
   });
 
-  useEffect(() => {
-    if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded, fontError]);
-
-  if (!fontsLoaded && !fontError) {
-    return null;
-  }
+  const fontsReady = fontsLoaded || !!fontError;
 
   return (
-    <SafeAreaProvider>
-      <View style={{ flex: 1, backgroundColor: Colors.noir }}>
-        <StatusBar style="light" />
-        <AuthGate />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: Colors.noir },
-            animation: 'fade',
-          }}
-        >
-          <Stack.Screen name="(onboarding)" />
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="recipe/[id]" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="cook/[id]" options={{ animation: 'slide_from_bottom' }} />
-          <Stack.Screen name="shopping" options={{ animation: 'slide_from_bottom' }} />
-          <Stack.Screen name="collections/[id]" options={{ animation: 'slide_from_right' }} />
-        </Stack>
-      </View>
-    </SafeAreaProvider>
+    <ClerkProvider
+      publishableKey={process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!}
+      tokenCache={tokenCache}
+    >
+      <QueryClientProvider client={queryClient}>
+        <RootNavigator fontsReady={fontsReady} />
+      </QueryClientProvider>
+    </ClerkProvider>
   );
 }
