@@ -107,7 +107,7 @@ function BannerCTA({ onPress, style }: { onPress?: () => void; style?: ViewStyle
               <Text style={styles.bannerBadgeText}>PRO</Text>
             </View>
             <Text style={styles.bannerTitle}>Go Pro</Text>
-            <Text style={styles.bannerSubtitle}>Unlimited recipes & shopping lists</Text>
+            <Text style={styles.bannerSubtitle}>Unlimited recipes & AI features</Text>
           </View>
           <View style={styles.bannerArrow}>
             <Ionicons name="arrow-forward" size={18} color={Colors.parchment} />

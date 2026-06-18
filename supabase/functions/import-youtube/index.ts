@@ -2,10 +2,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 import { HttpError, json, errorResponse } from '../_shared/http.ts';
 import { authenticateRequest } from '../_shared/auth.ts';
-import { enforceYouTubeGate, consumeYouTubeImport } from '../_shared/gating.ts';
+import { enforceCreditGate, consumeCredits } from '../_shared/gating.ts';
 import { insertRecipe } from '../_shared/recipes.ts';
-import { uploadRecipeImageFromUrl } from '../_shared/storage.ts';
-import { refineTags } from '../_shared/tagging.ts';
+import { finalizeRecipeInBackground } from '../_shared/finalize.ts';
+import { StepTimer } from '../_shared/timing.ts';
 import { fetchYouTubeTranscript } from '../_shared/transcript.ts';
 import {
   callOpenRouter,
@@ -16,11 +16,13 @@ import {
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-// Recipe transcripts usually recap ingredients/steps at the start and end, so
-// when over the cap we keep the head + tail rather than truncating to the head.
-const TRANSCRIPT_CAP = 12000;
-const HEAD_CHARS = 8000;
-const TAIL_CHARS = 4000;
+// gemini-2.5-flash has a ~1M-token context window, so we send the FULL transcript
+// — a cooking video's steps and the quantities called out mid-cook ("add 200g
+// flour") are spread throughout, not just at the ends. Only a pathological outlier
+// (a very long video) gets truncated, and then we keep the chronological START so
+// step order + the up-front ingredient list survive. (The old 12k cap that kept
+// head+tail dropped the middle, losing most steps and inline quantities.)
+const TRANSCRIPT_CAP = 100_000;
 
 const TAG = 'import-youtube';
 
@@ -53,29 +55,53 @@ Deno.serve(async (req: Request) => {
   });
 
   try {
-    // Auth (Clerk session token via JWKS) + YouTube metering. The gate rolls
-    // over the monthly counter and checks allowance (3 free / 20 lifetime) or a
-    // YouTube credit; nothing is consumed until the import succeeds (below).
+    const sw = new StepTimer(TAG);
+
+    // Auth (Clerk session token via JWKS) + credit metering. A captioned YouTube
+    // import costs 1 credit. The gate rolls over the monthly counter and checks
+    // the shared allowance (3 free / 20 lifetime) or a purchased credit; nothing
+    // is consumed until the import succeeds (below). Gate first — before we spend
+    // any transcriptapi.com credits on the transcript.
     const { userId } = await authenticateRequest(req, supabase);
-    const gate = await enforceYouTubeGate(supabase, userId);
+    const gate = await enforceCreditGate(supabase, userId, 1);
+    sw.mark('auth+gate');
 
-    // Fetch the transcript via the managed provider (Supadata). It throws a
-    // typed HttpError (no_transcript / rate_limited / etc.) handled by the
-    // outer catch.
-    let transcript = await fetchYouTubeTranscript(url);
+    // The transcript (transcriptapi.com) and the video metadata (oEmbed) are
+    // independent, so fetch them concurrently. fetchYouTubeTranscript throws a typed HttpError
+    // (no_transcript / rate_limited / …) handled by the outer catch; fetchOEmbed
+    // is best-effort and never throws.
+    const [transcriptRaw, oembed] = await Promise.all([
+      fetchYouTubeTranscript(url),
+      fetchOEmbed(url),
+    ]);
+    sw.mark('transcript+oembed');
+
+    // Diagnostic: how much transcript came back, and what does it look like? An
+    // empty/thin or non-recipe transcript is the usual reason extraction returns
+    // no ingredients/steps (status=200 only means the fetch succeeded, not that
+    // the captions describe a recipe).
+    console.log(
+      `[${TAG}] transcript chars=${transcriptRaw.length} preview="${transcriptRaw
+        .slice(0, 200)
+        .replace(/\s+/g, ' ')
+        .trim()}"`,
+    );
+
+    let transcript = transcriptRaw;
     if (transcript.length > TRANSCRIPT_CAP) {
-      transcript = `${transcript.slice(0, HEAD_CHARS)} ... ${transcript.slice(-TAIL_CHARS)}`;
+      // Keep the chronological start so steps stay in order (never head+tail —
+      // that drops the middle, where most of the cooking happens).
+      transcript = transcript.slice(0, TRANSCRIPT_CAP);
     }
-
-    // Video metadata via the public oEmbed endpoint (best-effort)
-    const { title, thumbnail } = await fetchOEmbed(url);
+    const { title, thumbnail } = oembed;
 
     const hint = title
       ? `This is a transcript from a YouTube cooking video titled "${title}". Extract the recipe being demonstrated.`
       : 'This is a transcript from a YouTube cooking video. Extract the recipe being demonstrated.';
     const userPrompt = `${hint}\n\n${transcript}`;
 
-    // Extract via OpenRouter
+    // Extract via OpenRouter (gemini-2.5-flash primary). Tags come back here too,
+    // so we insert with them directly and refine in the background (below).
     let recipe: RecipeJSON;
     try {
       recipe = await callOpenRouter<RecipeJSON>({
@@ -87,10 +113,17 @@ Deno.serve(async (req: Request) => {
       console.error(`[${TAG}] extraction failed:`, err);
       throw new HttpError(422, { error: 'extraction_failed' });
     }
+    sw.mark('extract');
 
-    // Refine tags with a light model before saving (best-effort; refineTags
-    // returns the existing tags unchanged on any failure, never throwing).
-    recipe.tags = await refineTags(recipe);
+    // Reject an empty extraction (a title but no ingredients AND no steps) instead
+    // of saving a useless recipe / spending the user's credit. Usually means the
+    // video's captions aren't an extractable recipe (visual-only, music, a vlog).
+    if ((recipe?.ingredients?.length ?? 0) === 0 && (recipe?.steps?.length ?? 0) === 0) {
+      console.warn(
+        `[${TAG}] no recipe extracted (title:${recipe?.title ? 'y' : 'n'} ingredients:${recipe?.ingredients?.length ?? 0} steps:${recipe?.steps?.length ?? 0}) — rejecting`,
+      );
+      throw new HttpError(422, { error: 'no_recipe_found' });
+    }
 
     // Fall back to the video thumbnail when the model didn't find an image
     const imageUrl = recipe.imageUrl ?? thumbnail ?? null;
@@ -105,29 +138,22 @@ Deno.serve(async (req: Request) => {
       imageUrl,
       tag: TAG,
     });
-    await consumeYouTubeImport(supabase, userId, gate, TAG);
+    await consumeCredits(supabase, userId, gate, TAG);
+    sw.mark('persist');
 
-    // Best-effort: copy the image into our private bucket and record its path so
-    // the client can resolve a signed URL later (get-recipe-image). This must
-    // never fail the import — the uploader already swallows its own errors, and
-    // the try/catch here is belt-and-braces. On any miss we keep image_url.
-    if (imageUrl) {
-      try {
-        const storagePath = await uploadRecipeImageFromUrl(
-          supabase,
-          userId,
-          inserted.id as string,
-          imageUrl,
-        );
-        if (storagePath) {
-          await supabase.from('recipes').update({ storage_path: storagePath }).eq('id', inserted.id);
-          inserted.storage_path = storagePath; // reflect it in the row we return
-        }
-      } catch (err) {
-        console.error(`[${TAG}] image storage failed (non-fatal):`, err);
-      }
-    }
+    // Tag refinement + private-bucket image copy run AFTER we respond — the row
+    // is already complete (extraction tags + origin image_url), so we don't make
+    // the user wait on them.
+    finalizeRecipeInBackground({
+      supabase,
+      userId,
+      recipeId: inserted.id as string,
+      recipe,
+      imageUrl,
+      tag: TAG,
+    });
 
+    sw.total();
     return json(inserted, 200);
   } catch (err) {
     return errorResponse(err, TAG);

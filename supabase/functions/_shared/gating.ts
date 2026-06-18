@@ -2,22 +2,21 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { HttpError } from './http.ts';
 
 // ── Pricing-model limits ─────────────────────────────────────────────────────
-// Free: 15 saved recipes, unlimited URL imports, 3 YouTube imports/month.
-// Lifetime: unlimited saved recipes, 20 YouTube imports/month.
-// YouTube imports beyond the monthly allowance consume a `youtube_credit`.
-// (Per the pricing spec, the 15-recipe cap gates URL imports only — YouTube is
-// gated by its own monthly allowance + credits, not the saved-recipe cap.)
+// Free: 15 saved recipes, unlimited URL imports, 3 monthly credits.
+// Lifetime: unlimited saved recipes, 20 monthly credits.
+// One shared "credit" pool covers every metered action: a captioned YouTube
+// import (1) and a calorie scan (1). Spend draws the monthly allowance first,
+// then purchased `youtube_credits`. (The 15-recipe cap gates URL/photo imports
+// only — the credit pool is independent of it.)
 const FREE_RECIPE_LIMIT = 15;
 const YT_ALLOWANCE_FREE = 3;
 const YT_ALLOWANCE_LIFETIME = 20;
-const AI_SCAN_COST = 2;
 
 export interface Entitlement {
   plan: 'free' | 'lifetime';
   isLifetime: boolean;
   recipeCount: number;
   youtubeCredits: number;
-  aiCredits: number;
   youtubeImportsThisMonth: number;
   youtubeMonthAnchor: string | null; // 'YYYY-MM-DD'
 }
@@ -37,7 +36,7 @@ async function loadEntitlement(
   const { data, error } = await supabase
     .from('entitlements')
     .select(
-      'plan, recipe_count, youtube_credits, ai_credits, youtube_imports_this_month, youtube_month_anchor',
+      'plan, recipe_count, youtube_credits, youtube_imports_this_month, youtube_month_anchor',
     )
     .eq('user_id', userId)
     .single();
@@ -50,7 +49,6 @@ async function loadEntitlement(
     isLifetime: plan === 'lifetime',
     recipeCount: (data.recipe_count as number) ?? 0,
     youtubeCredits: (data.youtube_credits as number) ?? 0,
-    aiCredits: (data.ai_credits as number) ?? 0,
     youtubeImportsThisMonth: (data.youtube_imports_this_month as number) ?? 0,
     youtubeMonthAnchor: (data.youtube_month_anchor as string | null) ?? null,
   };
@@ -93,64 +91,106 @@ export async function incrementRecipeCount(
   if (error) console.error(`[${tag}] recipe_count increment failed:`, error);
 }
 
-// ── YouTube imports ──────────────────────────────────────────────────────────
+/**
+ * Best-effort decrement of the saved-recipe counter, floored at 0 — the mirror of
+ * incrementRecipeCount, run when a recipe is deleted so the free 15-recipe gate
+ * and the profile meter recover. Re-reads the current count (so it can't push the
+ * counter below zero from a stale value) and never throws.
+ */
+export async function decrementRecipeCount(
+  supabase: SupabaseClient,
+  userId: string,
+  tag: string,
+): Promise<void> {
+  const ent = await loadEntitlement(supabase, userId).catch(() => null);
+  if (!ent) {
+    console.error(`[${tag}] recipe_count decrement skipped: entitlement load failed`);
+    return;
+  }
+  const { error } = await supabase
+    .from('entitlements')
+    .update({ recipe_count: Math.max(0, ent.recipeCount - 1) })
+    .eq('user_id', userId);
 
-export interface YouTubeGate {
+  if (error) console.error(`[${tag}] recipe_count decrement failed:`, error);
+}
+
+// ── Shared credits (video imports + calorie scans) ───────────────────────────
+
+export interface CreditGate {
   ent: Entitlement;
-  /** How this import will be paid for once it succeeds. */
-  mode: 'allowance' | 'credit';
+  /** Credits this action costs: 1 = captioned YouTube import or a calorie scan. */
+  cost: number;
+}
+
+/** Remaining monthly allowance credits for the entitlement (never negative). */
+function allowanceLeft(ent: Entitlement): number {
+  const allowance = ent.isLifetime ? YT_ALLOWANCE_LIFETIME : YT_ALLOWANCE_FREE;
+  return Math.max(0, allowance - ent.youtubeImportsThisMonth);
 }
 
 /**
- * Gates a YouTube import: first rolls over the monthly counter if we're in a new
- * month, then allows the import if there's monthly allowance left (3 free / 20
- * lifetime) or a YouTube credit to spend. Nothing is consumed here — call
- * `consumeYouTubeImport` only after the import succeeds, so a failed import
- * never burns a paid credit.
- * Throws 402 `{ reason: 'youtube_limit' }` when neither allowance nor credits
- * remain.
+ * Gates a metered action against the shared monthly credit pool (YouTube imports
+ * and calorie scans both draw from it): first rolls over the monthly counter if
+ * we're in a new month, then allows the action only if there are enough credits
+ * left to cover `cost` — drawn from the monthly allowance (3 free / 20 lifetime)
+ * first, then purchased `youtube_credits`. Nothing is consumed here — call
+ * `consumeCredits` only after the action succeeds, so a failure never burns a
+ * paid credit.
+ *
+ * `cost`: 1 for a captioned YouTube import or a calorie scan.
+ * Throws 402 `{ reason: 'out_of_credits' }` when the remaining budget < cost.
  */
-export async function enforceYouTubeGate(
+export async function enforceCreditGate(
   supabase: SupabaseClient,
   userId: string,
-): Promise<YouTubeGate> {
+  cost = 1,
+): Promise<CreditGate> {
   let ent = await loadEntitlement(supabase, userId);
 
   // Monthly rollover: reset the counter when the anchor is missing or in a prior
-  // month. Persist it now — a reset is correct regardless of the import outcome.
+  // month. Persist it now — a reset is correct regardless of the action outcome.
   const thisMonth = currentMonthAnchor();
   if (!ent.youtubeMonthAnchor || ent.youtubeMonthAnchor < thisMonth) {
     const { error } = await supabase
       .from('entitlements')
       .update({ youtube_imports_this_month: 0, youtube_month_anchor: thisMonth })
       .eq('user_id', userId);
-    if (error) throw new HttpError(500, { error: 'youtube_rollover_failed' });
+    if (error) throw new HttpError(500, { error: 'credit_rollover_failed' });
     ent = { ...ent, youtubeImportsThisMonth: 0, youtubeMonthAnchor: thisMonth };
   }
 
-  const allowance = ent.isLifetime ? YT_ALLOWANCE_LIFETIME : YT_ALLOWANCE_FREE;
-  if (ent.youtubeImportsThisMonth < allowance) return { ent, mode: 'allowance' };
-  if (ent.youtubeCredits > 0) return { ent, mode: 'credit' };
-  throw new HttpError(402, { reason: 'youtube_limit' });
+  const available = allowanceLeft(ent) + ent.youtubeCredits;
+  if (available < cost) throw new HttpError(402, { reason: 'out_of_credits' });
+  return { ent, cost };
 }
 
 /**
- * Records a successful YouTube import: always advances the monthly counter and
- * the saved-recipe counter; spends a YouTube credit only when this import was
- * over the monthly allowance. Best-effort (the recipe is already saved).
+ * Records a successful metered action: pays `cost` credits from the monthly
+ * allowance first, spilling over onto purchased `youtube_credits` only when the
+ * month's allowance can't cover it. When `incrementRecipe` is true (the default,
+ * for reel/video imports that create a recipe) it also advances the saved-recipe
+ * counter; a calorie scan passes false since it saves no recipe.
+ * Best-effort — the action has already succeeded by the time this runs.
  */
-export async function consumeYouTubeImport(
+export async function consumeCredits(
   supabase: SupabaseClient,
   userId: string,
-  gate: YouTubeGate,
+  gate: CreditGate,
   tag: string,
+  opts: { incrementRecipe?: boolean } = {},
 ): Promise<void> {
+  const { incrementRecipe = true } = opts;
+  const { ent, cost } = gate;
+  const fromAllowance = Math.min(allowanceLeft(ent), cost);
+  const fromCredits = cost - fromAllowance;
+
   const patch: Record<string, unknown> = {
-    youtube_imports_this_month: gate.ent.youtubeImportsThisMonth + 1,
-    recipe_count: gate.ent.recipeCount + 1,
+    youtube_imports_this_month: ent.youtubeImportsThisMonth + fromAllowance,
   };
-  if (gate.mode === 'credit') {
-    patch.youtube_credits = Math.max(0, gate.ent.youtubeCredits - 1);
+  if (incrementRecipe) patch.recipe_count = ent.recipeCount + 1;
+  if (fromCredits > 0) {
+    patch.youtube_credits = Math.max(0, ent.youtubeCredits - fromCredits);
   }
 
   const { error } = await supabase
@@ -158,53 +198,5 @@ export async function consumeYouTubeImport(
     .update(patch)
     .eq('user_id', userId);
 
-  if (error) console.error(`[${tag}] youtube usage update failed:`, error);
-}
-
-// ── AI macro scan (dish photo → nutrition) ───────────────────────────────────
-
-/**
- * Gates a macro scan on the user's AI credit balance. Lifetime users are NOT
- * exempt — consumables are metered for everyone to protect AI-provider margins.
- * Throws 402 `{ reason: 'no_ai_credits' }` when the balance is below the cost.
- * Returns the current balance (informational).
- */
-export async function enforceAiCredits(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<number> {
-  const { data, error } = await supabase
-    .from('entitlements')
-    .select('ai_credits')
-    .eq('user_id', userId)
-    .single();
-
-  if (error || !data) throw new HttpError(500, { error: 'entitlement_not_found' });
-  const credits = (data.ai_credits as number) ?? 0;
-  if (credits < AI_SCAN_COST) throw new HttpError(402, { reason: 'no_ai_credits' });
-  return credits;
-}
-
-/**
- * Atomically deducts the macro-scan cost via the `deduct_ai_credits` RPC (a
- * conditional UPDATE, so the check + decrement can't race). Returns the new
- * balance, or null if the deduction didn't apply (credits drained concurrently).
- * Called only after a successful, parsed scan result.
- */
-export async function deductAiCredits(
-  supabase: SupabaseClient,
-  userId: string,
-  tag: string,
-): Promise<number | null> {
-  const { data, error } = await supabase.rpc('deduct_ai_credits', {
-    p_user_id: userId,
-    p_amount: AI_SCAN_COST,
-  });
-
-  if (error) {
-    console.error(`[${tag}] ai credit deduction failed:`, error);
-    return null;
-  }
-  // The SQL function returns the new balance, or no row (null) if insufficient.
-  return typeof data === 'number' ? data : null;
+  if (error) console.error(`[${tag}] credit usage update failed:`, error);
 }

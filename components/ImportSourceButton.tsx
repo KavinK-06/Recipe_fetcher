@@ -18,6 +18,9 @@ export interface ImportSourceButtonProps {
   iconName: string;
   iconLib?: IconLib;
   iconColor?: string;
+  // Optional usage pill shown on the right (e.g. "3 credits" for monthly limits).
+  badge?: string;
+  badgeMuted?: boolean;
   onPress?: () => void;
   style?: ViewStyle;
 }
@@ -30,6 +33,8 @@ export default function ImportSourceButton({
   iconName,
   iconLib = 'ionicons',
   iconColor = Colors.saffron,
+  badge,
+  badgeMuted = false,
   onPress,
   style,
 }: ImportSourceButtonProps) {
@@ -79,6 +84,11 @@ export default function ImportSourceButton({
           <Text style={styles.label}>{label}</Text>
           {sublabel ? <Text style={styles.sublabel}>{sublabel}</Text> : null}
         </View>
+        {badge ? (
+          <View style={[styles.badge, badgeMuted && styles.badgeMuted]}>
+            <Text style={[styles.badgeText, badgeMuted && styles.badgeTextMuted]}>{badge}</Text>
+          </View>
+        ) : null}
         <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
       </Animated.View>
     </AnimatedPressable>
@@ -118,6 +128,27 @@ const styles = StyleSheet.create({
   sublabel: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 12,
-    color: Colors.muted,
+    color: Colors.mutedText,
+  },
+  badge: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 50,
+    backgroundColor: Colors.saffron,
+    flexShrink: 0,
+  },
+  badgeMuted: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: Colors.muted,
+  },
+  badgeText: {
+    fontFamily: Fonts.monoBold,
+    fontSize: 10,
+    color: Colors.noir,
+    letterSpacing: 0.3,
+  },
+  badgeTextMuted: {
+    color: Colors.mutedText,
   },
 });

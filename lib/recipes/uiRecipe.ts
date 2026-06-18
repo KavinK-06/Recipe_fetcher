@@ -38,12 +38,22 @@ export interface UiRecipe {
   sourceType: 'url' | 'youtube' | 'manual';
   ingredients: UiIngredient[];
   steps: UiStep[];
-  aiSummary: string | null;
-  /** True when backed by a real DB row (UUID) — gates image/summary Edge calls. */
+  /** True when backed by a real DB row (UUID) — gates image Edge calls. */
   isReal: boolean;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Older imports were stored before the backend scrubbed them, so an ingredient's
+// unit/quantity can be the literal text "null"/"none"/"-". Treat those as empty at
+// render time so existing recipes don't show "3 null" (newer imports are already
+// clean — see sanitizeIngredients in the import functions).
+const NULLISH_TEXT = /^(null|none|n\/?a|nil|undefined|[-–—.])$/i;
+function cleanText(value: unknown): string {
+  if (value == null) return '';
+  const s = String(value).trim();
+  return NULLISH_TEXT.test(s) ? '' : s;
+}
 
 /** Mock ids are short ('1', 'c1'); only real recipe ids are UUIDs. */
 export function isUuid(value: string | undefined | null): boolean {
@@ -125,13 +135,16 @@ export function rowToUiRecipe(row: RecipeRow): UiRecipe {
     tags: row.tags ?? [],
     sourceLabel: sourceLabelFor(row.source_url, row.source_type),
     sourceType: row.source_type,
-    ingredients: (row.ingredients ?? []).map((ing, idx) => ({
-      id: `i${idx}`,
-      name: ing.name,
-      unit: ing.unit,
-      quantityNum: parseQuantity(ing.quantity),
-      quantityRaw: typeof ing.quantity === 'string' ? ing.quantity : String(ing.quantity ?? ''),
-    })),
+    ingredients: (row.ingredients ?? []).map((ing, idx) => {
+      const unit = cleanText(ing.unit);
+      return {
+        id: `i${idx}`,
+        name: ing.name,
+        unit: unit || undefined,
+        quantityNum: parseQuantity(ing.quantity),
+        quantityRaw: cleanText(ing.quantity),
+      };
+    }),
     steps: (row.steps ?? [])
       .slice()
       .sort((a, b) => (a?.order ?? 0) - (b?.order ?? 0))
@@ -141,7 +154,6 @@ export function rowToUiRecipe(row: RecipeRow): UiRecipe {
         timerSeconds: undefined, // DB steps carry no timer
         ingredients: [], // DB steps carry no per-step ingredient list
       })),
-    aiSummary: row.ai_summary,
     isReal: true,
   };
 }
@@ -173,7 +185,6 @@ export function mockToUiRecipe(r: MockRecipe): UiRecipe {
       timerSeconds: s.timerSeconds,
       ingredients: s.ingredients,
     })),
-    aiSummary: null,
     isReal: false,
   };
 }

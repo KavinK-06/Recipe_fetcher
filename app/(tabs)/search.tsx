@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,7 @@ import {
   Pressable,
   FlatList,
   StyleSheet,
-  Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,42 +19,50 @@ import Animated, {
   withSpring,
   withTiming,
   FadeIn,
-  FadeOut,
   Layout,
 } from 'react-native-reanimated';
 import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
-import { RECIPES } from '../../constants/mockData';
+import { useRecipes } from '../../hooks/useRecipes';
+import type { RecipeRow } from '../../lib/api/import';
 import TagChip from '../../components/TagChip';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// Recipes the search filter operates on, normalised from the DB rows.
+type SearchItem = {
+  id: string;
+  title: string;
+  imageUri?: string;
+  cookTimeMins: number | null;
+  cookTimeLabel: string;
+  tags: string[];
+};
 
-// Flatten recipes into the shape the search filter expects
-const ALL_RECIPES = RECIPES.map((r) => ({
-  id: r.id,
-  title: r.title,
-  cuisine: r.cuisine,
-  diet: r.tags.find((t) => ['Vegetarian', 'Vegan', 'Gluten-Free'].includes(t)) ?? 'None',
-  cookTime: r.cookTime,
-  imageUri: r.imageUri,
-}));
-
-const RECENT_SEARCHES = ['pasta', 'vegan dinner', 'quick', 'chocolate'];
-
-const CUISINE_FILTERS = ['All', 'Italian', 'Japanese', 'Middle Eastern', 'French', 'North African'];
-const DIET_FILTERS = ['Any', 'Vegetarian', 'Vegan', 'Gluten-Free'];
+const DIET_TAGS = ['vegetarian', 'vegan', 'gluten-free', 'gluten free', 'dairy-free', 'keto', 'paleo'];
 const TIME_FILTERS = ['Any time', 'Under 20 min', 'Under 30 min', 'Under 60 min'];
+
+function toSearchItem(r: RecipeRow): SearchItem {
+  return {
+    id: r.id,
+    title: r.title,
+    imageUri: r.image_url ?? undefined,
+    cookTimeMins: r.cook_time_minutes,
+    cookTimeLabel: r.cook_time_minutes != null ? `${r.cook_time_minutes} min` : '—',
+    tags: r.tags ?? [],
+  };
+}
 
 // ── Result row card ────────────────────────────────────────────────────────────
 function ResultRow({
   item,
   onPress,
 }: {
-  item: (typeof ALL_RECIPES)[number];
+  item: SearchItem;
   onPress: () => void;
 }) {
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const dietTag = item.tags.find((t) => DIET_TAGS.includes(t.toLowerCase()));
+  const otherTag = item.tags.find((t) => t !== dietTag);
 
   return (
     <Animated.View entering={FadeIn.duration(200)} layout={Layout.springify()}>
@@ -67,23 +75,29 @@ function ResultRow({
         onPressOut={() => { scale.value = withSpring(1, { damping: 14, stiffness: 300 }); }}
       >
         <Animated.View style={[styles.resultRow, animStyle]}>
-          <Image
-            source={{ uri: item.imageUri }}
-            contentFit="cover"
-            transition={300}
-            style={styles.resultImage}
-          />
+          {item.imageUri ? (
+            <Image
+              source={{ uri: item.imageUri }}
+              contentFit="cover"
+              transition={300}
+              style={styles.resultImage}
+            />
+          ) : (
+            <View style={[styles.resultImage, styles.resultImageEmpty]}>
+              <Ionicons name="restaurant-outline" size={22} color={Colors.muted} />
+            </View>
+          )}
           <View style={styles.resultInfo}>
             <Text style={styles.resultTitle} numberOfLines={2}>{item.title}</Text>
             <View style={styles.resultMeta}>
               <View style={styles.metaPill}>
                 <Ionicons name="time-outline" size={11} color={Colors.noir} />
-                <Text style={styles.metaPillText}>{item.cookTime}</Text>
+                <Text style={styles.metaPillText}>{item.cookTimeLabel}</Text>
               </View>
-              <Text style={styles.resultCuisine}>{item.cuisine}</Text>
+              {otherTag ? <Text style={styles.resultCuisine}>{otherTag}</Text> : null}
             </View>
-            {item.diet !== 'None' && (
-              <TagChip label={item.diet} variant="dietary" style={styles.dietChip} />
+            {dietTag && (
+              <TagChip label={dietTag} variant="dietary" style={styles.dietChip} />
             )}
           </View>
           <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
@@ -93,7 +107,7 @@ function ResultRow({
   );
 }
 
-// ── Empty state ────────────────────────────────────────────────────────────────
+// ── Empty state (query matched nothing) ─────────────────────────────────────────
 function EmptyState({
   query,
   onImport,
@@ -106,7 +120,6 @@ function EmptyState({
 
   return (
     <Animated.View entering={FadeIn.duration(300)} style={styles.emptyWrap}>
-      {/* Warm illustration — stacked food icons */}
       <View style={styles.emptyIllustration}>
         <View style={styles.emptyPlate}>
           <Ionicons name="restaurant-outline" size={40} color={Colors.muted} />
@@ -121,7 +134,7 @@ function EmptyState({
 
       <Text style={styles.emptyHeadline}>No recipes found</Text>
       <Text style={styles.emptySub}>
-        Nothing matched "{query}".{'\n'}Why not import it from the web?
+        {query ? `Nothing matched "${query}".\n` : ''}Why not import it from the web?
       </Text>
 
       <Animated.View style={animStyle}>
@@ -146,11 +159,21 @@ function EmptyState({
 export default function SearchScreen() {
   const router = useRouter();
   const inputRef = useRef<TextInput>(null);
+  const { recipes, isLoading } = useRecipes();
   const [query, setQuery] = useState('');
-  const [activeCuisine, setActiveCuisine] = useState('All');
-  const [activeDiet, setActiveDiet] = useState('Any');
+  const [activeTag, setActiveTag] = useState('All');
   const [activeTime, setActiveTime] = useState('Any time');
   const [showFilters, setShowFilters] = useState(false);
+
+  const items = useMemo(() => recipes.map(toSearchItem), [recipes]);
+
+  // Tag filter chips, derived from the user's actual recipe tags (most common first).
+  const tagFilters = useMemo(() => {
+    const counts = new Map<string, number>();
+    items.forEach((it) => it.tags.forEach((t) => counts.set(t, (counts.get(t) ?? 0) + 1)));
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
+    return ['All', ...sorted];
+  }, [items]);
 
   // Auto-focus on mount
   useEffect(() => {
@@ -173,32 +196,36 @@ export default function SearchScreen() {
     Haptics.selectionAsync();
     const next = !showFilters;
     setShowFilters(next);
-    filterBarHeight.value = withSpring(next ? 140 : 0, { damping: 16, stiffness: 220 });
+    // Height uses timing, NOT spring: an underdamped spring on a layout height
+    // overshoots and oscillates, which makes the results list below bounce up and
+    // down a few times before settling. Timing expands/collapses once, cleanly.
+    filterBarHeight.value = withTiming(next ? 132 : 0, { duration: 220 });
     filterOpacity.value = withTiming(next ? 1 : 0, { duration: 200 });
   };
 
-  const filtered = useCallback(() => {
-    return ALL_RECIPES.filter((r) => {
-      const matchQuery = query.length === 0 ||
-        r.title.toLowerCase().includes(query.toLowerCase()) ||
-        r.cuisine.toLowerCase().includes(query.toLowerCase());
-      const matchCuisine = activeCuisine === 'All' || r.cuisine === activeCuisine;
-      const matchDiet = activeDiet === 'Any' || r.diet === activeDiet;
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return items.filter((it) => {
+      const matchQuery =
+        q.length === 0 ||
+        it.title.toLowerCase().includes(q) ||
+        it.tags.some((t) => t.toLowerCase().includes(q));
+      const matchTag = activeTag === 'All' || it.tags.includes(activeTag);
       const matchTime = (() => {
         if (activeTime === 'Any time') return true;
-        const mins = parseInt(r.cookTime);
-        if (activeTime === 'Under 20 min') return mins < 20;
-        if (activeTime === 'Under 30 min') return mins < 30;
-        if (activeTime === 'Under 60 min') return mins < 60;
+        if (it.cookTimeMins == null) return false;
+        if (activeTime === 'Under 20 min') return it.cookTimeMins < 20;
+        if (activeTime === 'Under 30 min') return it.cookTimeMins < 30;
+        if (activeTime === 'Under 60 min') return it.cookTimeMins < 60;
         return true;
       })();
-      return matchQuery && matchCuisine && matchDiet && matchTime;
+      return matchQuery && matchTag && matchTime;
     });
-  }, [query, activeCuisine, activeDiet, activeTime]);
+  }, [items, query, activeTag, activeTime]);
 
-  const results = filtered();
-  const showEmpty = query.length > 0 && results.length === 0;
-  const showRecents = query.length === 0;
+  const isIdle = query.length === 0 && activeTag === 'All' && activeTime === 'Any time';
+  const noRecipesAtAll = !isLoading && items.length === 0;
+  const showEmpty = !isIdle && results.length === 0;
 
   const goToImport = () => router.push('/(tabs)/import' as any);
   const goToRecipe = (id: string) => router.push(`/recipe/${id}` as any);
@@ -212,8 +239,8 @@ export default function SearchScreen() {
           <TextInput
             ref={inputRef}
             style={styles.input}
-            placeholder="Search recipes, cuisines…"
-            placeholderTextColor={Colors.muted}
+            placeholder="Search your recipes…"
+            placeholderTextColor={Colors.mutedText}
             value={query}
             onChangeText={setQuery}
             returnKeyType="search"
@@ -236,11 +263,7 @@ export default function SearchScreen() {
             >
               <Ionicons name="close-circle" size={18} color={Colors.muted} />
             </Pressable>
-          ) : (
-            <Pressable hitSlop={8} onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}>
-              <Ionicons name="mic-outline" size={18} color={Colors.muted} />
-            </Pressable>
-          )}
+          ) : null}
         </Animated.View>
 
         {/* Filter toggle button */}
@@ -260,33 +283,16 @@ export default function SearchScreen() {
       {/* ── Expandable filter rows ── */}
       <Animated.View style={filterAnimStyle}>
         <View style={styles.filterGroup}>
-          <Text style={styles.filterGroupLabel}>Cuisine</Text>
+          <Text style={styles.filterGroupLabel}>Tags</Text>
           <FlatList
             horizontal
-            data={CUISINE_FILTERS}
+            data={tagFilters}
             keyExtractor={(i) => i}
             renderItem={({ item }) => (
               <TagChip
                 label={item}
-                variant={activeCuisine === item ? 'active' : 'default'}
-                onPress={() => { setActiveCuisine(item); Haptics.selectionAsync(); }}
-              />
-            )}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterChipRow}
-          />
-        </View>
-        <View style={styles.filterGroup}>
-          <Text style={styles.filterGroupLabel}>Dietary</Text>
-          <FlatList
-            horizontal
-            data={DIET_FILTERS}
-            keyExtractor={(i) => i}
-            renderItem={({ item }) => (
-              <TagChip
-                label={item}
-                variant={activeDiet === item ? 'active' : 'dietary'}
-                onPress={() => { setActiveDiet(item); Haptics.selectionAsync(); }}
+                variant={activeTag === item ? 'active' : 'default'}
+                onPress={() => { setActiveTag(item); Haptics.selectionAsync(); }}
               />
             )}
             showsHorizontalScrollIndicator={false}
@@ -312,36 +318,51 @@ export default function SearchScreen() {
         </View>
       </Animated.View>
 
-      {/* ── Recent searches (idle state) ── */}
-      {showRecents && (
-        <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)}>
-          <View style={styles.recentsWrap}>
-            <Text style={styles.recentsLabel}>Recent Searches</Text>
-            <View style={styles.recentsRow}>
-              {RECENT_SEARCHES.map((s) => (
-                <TagChip
-                  key={s}
-                  label={s}
-                  variant="default"
-                  onPress={() => {
-                    setQuery(s);
-                    Haptics.selectionAsync();
-                  }}
-                />
-              ))}
-            </View>
-          </View>
-        </Animated.View>
+      {/* ── Loading ── */}
+      {isLoading && (
+        <View style={styles.centerFill}>
+          <ActivityIndicator color={Colors.saffron} />
+        </View>
       )}
 
-      {/* ── Results list ── */}
-      {!showRecents && !showEmpty && (
+      {/* ── No recipes imported at all ── */}
+      {noRecipesAtAll && <EmptyState query="" onImport={goToImport} />}
+
+      {/* ── Results list — shows every recipe in the idle ("All") state, and the
+           filtered subset while searching. The browse-by-tag chips ride along as a
+           list header in the idle state so the full list still sits underneath. ── */}
+      {!isLoading && !noRecipesAtAll && !showEmpty && (
         <FlatList
           data={results}
           keyExtractor={(r) => r.id}
           renderItem={({ item }) => (
             <ResultRow item={item} onPress={() => goToRecipe(item.id)} />
           )}
+          ListHeaderComponent={
+            isIdle ? (
+              <Animated.View entering={FadeIn.duration(200)} style={styles.browseHeader}>
+                {tagFilters.length > 1 && (
+                  <View style={styles.browseTags}>
+                    <Text style={styles.recentsLabel}>Browse by tag</Text>
+                    <View style={styles.recentsRow}>
+                      {tagFilters.filter((t) => t !== 'All').slice(0, 12).map((t) => (
+                        <TagChip
+                          key={t}
+                          label={t}
+                          variant="default"
+                          onPress={() => {
+                            setActiveTag(t);
+                            Haptics.selectionAsync();
+                          }}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                )}
+                <Text style={styles.recentsLabel}>All recipes · {results.length}</Text>
+              </Animated.View>
+            ) : null
+          }
           contentContainerStyle={styles.resultsList}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -349,8 +370,8 @@ export default function SearchScreen() {
         />
       )}
 
-      {/* ── Empty state ── */}
-      {showEmpty && (
+      {/* ── Empty state (a search/filter that matched nothing) ── */}
+      {!isLoading && showEmpty && !noRecipesAtAll && (
         <EmptyState query={query} onImport={goToImport} />
       )}
     </SafeAreaView>
@@ -415,7 +436,7 @@ const styles = StyleSheet.create({
   filterGroupLabel: {
     fontFamily: Fonts.bodyMedium,
     fontSize: 11,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     paddingHorizontal: 16,
@@ -426,16 +447,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // Recent searches
-  recentsWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
+  // Browse by tag (idle list header)
+  browseHeader: {
+    paddingTop: 8,
+    paddingBottom: 4,
+    gap: 16,
+  },
+  browseTags: {
     gap: 12,
   },
   recentsLabel: {
     fontFamily: Fonts.bodyMedium,
     fontSize: 13,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
@@ -443,6 +467,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+
+  centerFill: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // Results
@@ -462,6 +492,11 @@ const styles = StyleSheet.create({
     height: 72,
     borderRadius: 14,
     flexShrink: 0,
+  },
+  resultImageEmpty: {
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   resultInfo: {
     flex: 1,
@@ -495,7 +530,8 @@ const styles = StyleSheet.create({
   resultCuisine: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 12,
-    color: Colors.muted,
+    color: Colors.mutedText,
+    textTransform: 'capitalize',
   },
   dietChip: {
     marginTop: 2,
@@ -552,7 +588,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
     lineHeight: 21,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textAlign: 'center',
   },
   emptyButton: {

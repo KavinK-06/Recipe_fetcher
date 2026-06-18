@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 import { HttpError, json, errorResponse } from '../_shared/http.ts';
 import { authenticateRequest } from '../_shared/auth.ts';
-import { enforceAiCredits, deductAiCredits } from '../_shared/gating.ts';
+import { enforceCreditGate, consumeCredits } from '../_shared/gating.ts';
 import { callOpenRouter } from '../_shared/openrouter.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
@@ -81,11 +81,13 @@ Deno.serve(async (req: Request) => {
   });
 
   try {
-    // Auth (Clerk session token via JWKS). The scan itself writes no recipe row,
-    // but it IS a metered AI feature: require enough AI credits up front (2 per
-    // scan). Lifetime users are NOT exempt — consumables are metered for all.
+    // Auth (Clerk session token via JWKS). A calorie scan costs 1 credit from the
+    // shared pool (same pool as YouTube imports). It writes no recipe
+    // row, so the consume below passes incrementRecipe:false. Lifetime users are
+    // NOT exempt — credits are metered for everyone. Nothing is spent until the
+    // scan succeeds.
     const { userId } = await authenticateRequest(req, supabase);
-    await enforceAiCredits(supabase, userId);
+    const gate = await enforceCreditGate(supabase, userId, 1);
 
     const userPrompt = buildPrompt(noteText);
 
@@ -113,11 +115,10 @@ Deno.serve(async (req: Request) => {
       throw new HttpError(422, { error: 'unparseable_result' });
     }
 
-    // Charge for the scan only now that it produced a usable result. Atomic
-    // (conditional UPDATE via RPC); never blocks returning the result.
-    const creditsRemaining = await deductAiCredits(supabase, userId, TAG);
+    // Charge the credit only now that the scan produced a usable result.
+    await consumeCredits(supabase, userId, gate, TAG, { incrementRecipe: false });
 
-    return json({ ...parsed, creditsRemaining }, 200);
+    return json(parsed, 200);
   } catch (err) {
     return errorResponse(err, TAG);
   }

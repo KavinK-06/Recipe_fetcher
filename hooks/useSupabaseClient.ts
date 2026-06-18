@@ -2,6 +2,11 @@ import { useMemo } from 'react';
 import { useAuth } from '@clerk/clerk-expo';
 import { createSupabaseClient } from '../lib/supabase/client';
 
+// The template-fallback path is a steady state (the default session token works
+// when Clerk is a Third-Party Auth provider), so warn ONCE per session instead of
+// on every DB request. The genuine failure — no token at all — still logs each time.
+let warnedTemplateFallback = false;
+
 /**
  * Returns a Supabase client whose requests carry the current Clerk user's
  * JWT. The client is memoised per-user so the same instance is reused across
@@ -28,12 +33,15 @@ export function useSupabaseClient() {
 
         const session = await getToken().catch(() => null);
         if (session) {
-          console.warn(
-            '[useSupabaseClient] `supabase` JWT template returned no token — ' +
-              'falling back to the default Clerk session token. Direct DB reads ' +
-              'need Clerk registered as a Third-Party Auth provider in Supabase ' +
-              '(see README → "Clerk ↔ Supabase auth").',
-          );
+          if (!warnedTemplateFallback) {
+            warnedTemplateFallback = true;
+            console.warn(
+              '[useSupabaseClient] `supabase` JWT template returned no token — ' +
+                'falling back to the default Clerk session token (logged once). ' +
+                'Direct DB reads need Clerk registered as a Third-Party Auth ' +
+                'provider in Supabase (see README → "Clerk ↔ Supabase auth").',
+            );
+          }
           return session;
         }
 

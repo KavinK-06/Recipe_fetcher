@@ -75,9 +75,10 @@ export async function analyzeDishPhoto(
   });
 
   if (!res.ok) {
+    // 402 limit responses carry `{ reason }`; other errors carry `{ error }`.
     const code = await res
       .json()
-      .then((b) => b?.error)
+      .then((b) => b?.error ?? b?.reason)
       .catch(() => undefined);
     throw new NutritionError(res.status, code ?? 'unknown');
   }

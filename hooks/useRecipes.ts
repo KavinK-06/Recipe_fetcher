@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@clerk/clerk-expo';
 import { useSupabaseClient } from './useSupabaseClient';
-import type { RecipeRow } from '../lib/api/import';
+import { deleteRecipe, type RecipeRow } from '../lib/api/import';
 
 /**
  * The signed-in user's saved recipes, newest first, read directly from
@@ -10,8 +10,7 @@ import type { RecipeRow } from '../lib/api/import';
  * is needed.
  *
  * Cache key `['recipes', userId]` — invalidated by `useImportRecipe` (after a new
- * import) and `useRecipeSummary` (after a summary write), both of which
- * invalidate the `['recipes']` prefix.
+ * import), which invalidates the `['recipes']` prefix.
  */
 export function useRecipes() {
   const { userId } = useAuth();
@@ -46,4 +45,24 @@ export function useRecipes() {
     isError: query.isError,
     refetch: query.refetch,
   };
+}
+
+/**
+ * Deletes a recipe through the delete-recipe Edge Function (which also decrements
+ * the saved-recipe counter server-side). On success, invalidates the recipe lists,
+ * the entitlements (so the free-plan meter recovers), and collections (a deleted
+ * recipe drops out of any collection it was in).
+ */
+export function useDeleteRecipe() {
+  const { getToken } = useAuth();
+  const qc = useQueryClient();
+
+  return useMutation<void, Error, string>({
+    mutationFn: (recipeId: string) => deleteRecipe(recipeId, () => getToken()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['recipes'] });
+      qc.invalidateQueries({ queryKey: ['entitlements'] });
+      qc.invalidateQueries({ queryKey: ['collections'] });
+    },
+  });
 }

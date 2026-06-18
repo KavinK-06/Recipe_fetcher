@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
   label: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 9,
-    color: Colors.muted,
+    color: Colors.mutedText,
     marginTop: 2,
     textAlign: 'center',
   },

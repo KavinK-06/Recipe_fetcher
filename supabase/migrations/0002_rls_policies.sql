@@ -1,4 +1,4 @@
--- Row Level Security policies for Saveur.
+-- Row Level Security policies for Rasoi.
 --
 -- Trust model:
 --   * Clerk issues a JWT (template "supabase") with claim "user_id" = Clerk user ID.

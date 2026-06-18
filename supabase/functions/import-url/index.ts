@@ -4,8 +4,9 @@ import { HttpError, json, errorResponse } from '../_shared/http.ts';
 import { authenticateRequest } from '../_shared/auth.ts';
 import { enforceUrlGate, incrementRecipeCount } from '../_shared/gating.ts';
 import { insertRecipe } from '../_shared/recipes.ts';
-import { uploadRecipeImageFromUrl } from '../_shared/storage.ts';
-import { refineTags } from '../_shared/tagging.ts';
+import { finalizeRecipeInBackground } from '../_shared/finalize.ts';
+import { StepTimer } from '../_shared/timing.ts';
+import { scrapeWebPage } from '../_shared/transcript.ts';
 import {
   callOpenRouter,
   RECIPE_EXTRACTION_SYSTEM_PROMPT,
@@ -16,7 +17,17 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
 const MAX_PAGE_BYTES = 2 * 1024 * 1024; // 2 MB
-const MAX_TEXT_CHARS = 8000;
+// Send a generous slice of the page text to the model — gemini-2.5-flash has a
+// huge context window, and a recipe's steps/quantities often sit well past the
+// first few thousand chars (after intro blurbs / ads). Still bounded so a
+// comment-heavy page can't balloon the prompt. (Was 8000, which clipped steps.)
+const MAX_TEXT_CHARS = 50000;
+// Below this much readable text, a "successful" direct fetch is treated as
+// unusable (a JS-only shell / cookie wall) and we fall back to Supadata scrape.
+const MIN_USABLE_TEXT = 200;
+// Cap the direct fetch so a hanging/slow site fails fast and routes to the
+// Supadata fallback, rather than running the worker into a 546 resource kill.
+const DIRECT_FETCH_TIMEOUT_MS = 15_000;
 
 const TAG = 'import-url';
 
@@ -45,21 +56,50 @@ Deno.serve(async (req: Request) => {
   });
 
   try {
+    const sw = new StepTimer(TAG);
+
     // Auth (Clerk session token via JWKS) + free saved-recipe cap (15; lifetime
     // is unlimited). URL imports aren't otherwise metered.
     const { userId } = await authenticateRequest(req, supabase);
     const gate = await enforceUrlGate(supabase, userId);
+    sw.mark('auth+gate');
 
-    // Fetch the page
-    const page = await fetchPage(url);
-    if (!page.ok) throw new HttpError(422, { error: page.error });
+    // Get the page text. Try a direct fetch first — it's free and works for most
+    // recipe blogs. If the site blocks us (Cloudflare/bot wall → 4xx, non-HTML,
+    // oversized) OR returns a near-empty JS shell, fall back to Supadata's
+    // /web/scrape, which fetches through residential proxies + a headless browser
+    // (1 Supadata credit). That's what gets past hard publishers like AllRecipes.
+    let pageTitle = '';
+    let pageText = '';
+    let ogImage: string | null = null;
 
-    // Strip to readable text + pull meta tags
-    const { text, ogImage, ogTitle } = stripHtml(page.html);
+    const direct = await fetchPage(url);
+    if (direct.ok) {
+      const stripped = stripHtml(direct.html);
+      if (stripped.text.length >= MIN_USABLE_TEXT) {
+        pageText = stripped.text;
+        pageTitle = stripped.ogTitle ?? '';
+        ogImage = stripped.ogImage;
+      }
+    }
+    sw.mark('fetch:direct');
+
+    // Fall back to the residential-proxy scraper on any block / thin result.
+    if (!pageText) {
+      console.warn(
+        `[${TAG}] direct fetch unusable (${direct.ok ? 'thin_content' : direct.error}); using Supadata scrape`,
+      );
+      const scraped = await scrapeWebPage(url);
+      pageText = scraped.content;
+      pageTitle = scraped.title;
+      sw.mark('fetch:scrape');
+    }
+
     const userPrompt =
-      (ogTitle ? `Page title: ${ogTitle}\n\n` : '') + text.slice(0, MAX_TEXT_CHARS);
+      (pageTitle ? `Page title: ${pageTitle}\n\n` : '') + pageText.slice(0, MAX_TEXT_CHARS);
 
-    // Extract via OpenRouter
+    // Extract via OpenRouter (gemini-2.5-flash primary). Tags come back here too,
+    // so we insert with them directly and refine in the background (below).
     let recipe: RecipeJSON;
     try {
       recipe = await callOpenRouter<RecipeJSON>({
@@ -71,10 +111,7 @@ Deno.serve(async (req: Request) => {
       console.error(`[${TAG}] extraction failed:`, err);
       throw new HttpError(422, { error: 'extraction_failed' });
     }
-
-    // Refine tags with a light model before saving (best-effort; refineTags
-    // returns the existing tags unchanged on any failure, never throwing).
-    recipe.tags = await refineTags(recipe);
+    sw.mark('extract');
 
     // Fall back to og:image when the model didn't find one
     const imageUrl = recipe.imageUrl ?? ogImage ?? null;
@@ -89,28 +126,21 @@ Deno.serve(async (req: Request) => {
       tag: TAG,
     });
     await incrementRecipeCount(supabase, userId, gate.recipeCount, TAG);
+    sw.mark('persist');
 
-    // Best-effort: copy the image into our private bucket and record its path so
-    // the client can resolve a signed URL later (get-recipe-image). This must
-    // never fail the import — the uploader already swallows its own errors, and
-    // the try/catch here is belt-and-braces. On any miss we keep image_url.
-    if (imageUrl) {
-      try {
-        const storagePath = await uploadRecipeImageFromUrl(
-          supabase,
-          userId,
-          inserted.id as string,
-          imageUrl,
-        );
-        if (storagePath) {
-          await supabase.from('recipes').update({ storage_path: storagePath }).eq('id', inserted.id);
-          inserted.storage_path = storagePath; // reflect it in the row we return
-        }
-      } catch (err) {
-        console.error(`[${TAG}] image storage failed (non-fatal):`, err);
-      }
-    }
+    // Tag refinement + private-bucket image copy run AFTER we respond — the row
+    // is already complete (extraction tags + origin image_url), so we don't make
+    // the user wait on them.
+    finalizeRecipeInBackground({
+      supabase,
+      userId,
+      recipeId: inserted.id as string,
+      recipe,
+      imageUrl,
+      tag: TAG,
+    });
 
+    sw.total();
     return json(inserted, 200);
   } catch (err) {
     return errorResponse(err, TAG);
@@ -132,6 +162,8 @@ type FetchResult =
 
 async function fetchPage(url: string): Promise<FetchResult> {
   let res: Response;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), DIRECT_FETCH_TIMEOUT_MS);
   try {
     res = await fetch(url, {
       headers: {
@@ -141,9 +173,13 @@ async function fetchPage(url: string): Promise<FetchResult> {
         Accept: 'text/html,application/xhtml+xml',
       },
       redirect: 'follow',
+      signal: ctrl.signal,
     });
   } catch {
+    // Includes AbortError (timeout) → caller falls back to the Supadata scraper.
     return { ok: false, error: 'fetch_failed' };
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!res.ok) {

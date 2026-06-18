@@ -20,6 +20,8 @@ export interface RecipeCardProps {
   isSaved?: boolean;
   onPress?: () => void;
   onSavePress?: (id: string) => void;
+  /** When provided, the corner shows a 3-dot menu button instead of the bookmark. */
+  onMenuPress?: (id: string) => void;
   style?: ViewStyle;
 }
 
@@ -34,6 +36,7 @@ export default function RecipeCard({
   isSaved = false,
   onPress,
   onSavePress,
+  onMenuPress,
   style,
 }: RecipeCardProps) {
   const scale = useSharedValue(1);
@@ -55,6 +58,11 @@ export default function RecipeCard({
     onSavePress?.(id);
   };
 
+  const handleMenu = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onMenuPress?.(id);
+  };
+
   return (
     <AnimatedPressable
       onPress={onPress}
@@ -69,6 +77,11 @@ export default function RecipeCard({
             placeholder={blurhash}
             contentFit="cover"
             transition={300}
+            // memory-disk caching avoids re-decoding the same image on scroll/
+            // re-render; recyclingKey tells expo-image to swap the bitmap (not
+            // reuse a stale one) when a virtualized row is recycled for a new card.
+            cachePolicy="memory-disk"
+            recyclingKey={id}
             style={styles.image}
           />
           {/* Cook time badge */}
@@ -76,18 +89,21 @@ export default function RecipeCard({
             <Ionicons name="time-outline" size={11} color={Colors.noir} />
             <Text style={styles.timeBadgeText}>{cookTime}</Text>
           </View>
-          {/* Save button */}
-          <Pressable
-            onPress={handleSave}
-            hitSlop={8}
-            style={styles.saveButton}
-          >
-            <Ionicons
-              name={isSaved ? 'bookmark' : 'bookmark-outline'}
-              size={18}
-              color={isSaved ? Colors.saffron : Colors.parchment}
-            />
-          </Pressable>
+          {/* Corner action: 3-dot menu when onMenuPress is set, otherwise the
+              save/remove bookmark (the collection screen still uses the bookmark). */}
+          {onMenuPress ? (
+            <Pressable onPress={handleMenu} hitSlop={8} style={styles.saveButton}>
+              <Ionicons name="ellipsis-horizontal" size={18} color={Colors.parchment} />
+            </Pressable>
+          ) : onSavePress ? (
+            <Pressable onPress={handleSave} hitSlop={8} style={styles.saveButton}>
+              <Ionicons
+                name={isSaved ? 'bookmark' : 'bookmark-outline'}
+                size={18}
+                color={isSaved ? Colors.saffron : Colors.parchment}
+              />
+            </Pressable>
+          ) : null}
         </View>
         <View style={styles.info}>
           <Text style={styles.title} numberOfLines={2}>

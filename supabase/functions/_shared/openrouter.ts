@@ -1,8 +1,10 @@
-const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct";
-// NOTE: keep these slugs in sync with OpenRouter's live catalog. `google/
-// gemini-flash-1.5` was retired (404 "No endpoints found"); gemini-2.5-flash is
-// its current, multimodal, JSON-capable replacement.
-const DEFAULT_FALLBACK = "google/gemini-2.5-flash";
+// gemini-2.5-flash leads: for structured recipe extraction (text → JSON) it's
+// ~3–5x faster than the 70B model at equal quality, so it's the primary; the 70B
+// llama is the fallback. NOTE: keep these slugs in sync with OpenRouter's live
+// catalog — `google/gemini-flash-1.5` was retired (404 "No endpoints found");
+// gemini-2.5-flash is its current, multimodal, JSON-capable replacement.
+const DEFAULT_MODEL = "google/gemini-2.5-flash";
+const DEFAULT_FALLBACK = "meta-llama/llama-3.3-70b-instruct";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const TIMEOUT_MS = 30_000;
 
@@ -29,7 +31,7 @@ export interface RecipeJSON {
 }
 
 export const RECIPE_EXTRACTION_SYSTEM_PROMPT =
-  `You are a culinary data extractor. Given raw text (a recipe webpage or a transcript), return ONLY a JSON object matching this exact schema: {title, description, ingredients[{name, quantity, unit}], steps[{order, instruction}], cookTime, prepTime, servings, tags[], imageUrl}. cookTime and prepTime are integer minutes or null. servings is an integer or null. tags are 3-6 lowercase one-word category labels (e.g. "vegan", "dessert", "indian", "30-min"). If a field is unknown, use null or empty array. Return ONLY the JSON — no markdown, no commentary.`;
+  `You are a culinary data extractor. Given raw text (a recipe webpage or a transcript), return ONLY a JSON object matching this exact schema: {title, description, ingredients[{name, quantity, unit}], steps[{order, instruction}], cookTime, prepTime, servings, tags[], imageUrl}. cookTime and prepTime are integer minutes or null. servings is an integer or null. tags are 3-6 lowercase one-word category labels (e.g. "vegan", "dessert", "indian", "30-min"). Extract the COMPLETE recipe from the WHOLE text, not just the beginning or end: include EVERY ingredient with its quantity and unit — including amounts mentioned mid-step like "add 200g of flour" or "two cloves of garlic" — and include EVERY preparation step in the order it is performed. Do NOT summarise, merge, skip, or keep only the final steps; transcripts ramble, so reconstruct the full ordered method from the entire text. Prefer METRIC units: convert any weight given in pounds or ounces to grams (1 lb ≈ 454 g, 1 oz ≈ 28 g) and any liquid volume given in fluid ounces, pints, quarts or gallons to millilitres or litres (1 fl oz ≈ 30 ml, 1 pint ≈ 470 ml), rounding to sensible cooking amounts; leave intuitive kitchen measures as they are (teaspoon, tablespoon, cup, pinch, clove, slice, and whole-piece counts). If the source text is in any language other than English, TRANSLATE every text field (title, description, ingredient names and units, step instructions, tags) into natural English — keep proper dish/ingredient names but render them in English script. If a field is unknown, use null or an empty array — for an ingredient with no unit or no amount, use JSON null for that field, NEVER the text "null"/"none"/"n/a". Return ONLY the JSON — no markdown, no commentary.`;
 
 interface CallOptions {
   model?: string;
@@ -49,7 +51,7 @@ async function callModel<T>(
 ): Promise<T> {
   const apiKey = Deno.env.get("OPENROUTER_API_KEY");
   const referer =
-    Deno.env.get("OPENROUTER_REFERER") ?? "https://saveur.app";
+    Deno.env.get("OPENROUTER_REFERER") ?? "https://rasoi.app";
 
   // Vision models take the user message as an array of content parts (text +
   // image_url); plain text calls keep `content` as a string for compatibility.
@@ -70,6 +72,11 @@ async function callModel<T>(
       { role: "system", content: opts.systemPrompt },
       { role: "user", content: userContent },
     ],
+    // Route to the highest-throughput provider that still honours the params we
+    // send (e.g. response_format json). We block on the FULL response, so tokens/
+    // sec matters more than price or time-to-first-token. `require_parameters`
+    // keeps json-mode calls from landing on a provider that would ignore it.
+    provider: { sort: "throughput", require_parameters: true },
     ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
     ...(opts.responseFormat === "json"
       ? { response_format: { type: "json_object" } }
@@ -88,7 +95,7 @@ async function callModel<T>(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
         "HTTP-Referer": referer,
-        "X-Title": "Saveur",
+        "X-Title": "Rasoi",
       },
       body: JSON.stringify(body),
     });

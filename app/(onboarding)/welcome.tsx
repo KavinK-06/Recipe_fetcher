@@ -23,6 +23,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
+import { markOnboardingComplete } from '../../lib/onboarding';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<SlideData>);
@@ -41,14 +42,14 @@ function Slide1Illustration() {
       {/* Central URL bar */}
       <View style={il.urlBar}>
         <Ionicons name="link-outline" size={16} color={Colors.saffron} />
-        <Text style={il.urlText}>instagram.com/reel/abc123</Text>
+        <Text style={il.urlText}>youtube.com/watch?v=abc123</Text>
       </View>
-      {/* Social icons row */}
+      {/* Source icons row */}
       <View style={il.socialRow}>
         {[
-          { icon: 'logo-tiktok', label: 'TikTok', color: '#69C9D0' },
-          { icon: 'logo-instagram', label: 'Instagram', color: '#E1306C' },
           { icon: 'logo-youtube', label: 'YouTube', color: '#FF0000' },
+          { icon: 'globe-outline', label: 'Website', color: Colors.saffron },
+          { icon: 'camera-outline', label: 'Photo', color: '#69C9D0' },
         ].map((s) => (
           <View key={s.label} style={il.socialChip}>
             <View style={[il.socialIconWrap, { borderColor: s.color + '55' }]}>
@@ -132,7 +133,7 @@ const SLIDES: SlideData[] = [
   {
     key: 'import',
     headline: 'Import from anywhere',
-    sub: 'Paste a URL, share from TikTok, Instagram, or YouTube — Saveur does the rest.',
+    sub: 'Paste a URL, scan a photo, or import from YouTube — Rasoi does the rest.',
     illustration: <Slide1Illustration />,
   },
   {
@@ -215,10 +216,17 @@ export default function OnboardingScreen() {
     },
   ).current;
 
+  // Every path out of onboarding persists the flag first so the slides never
+  // show again on this install, then hands off to sign-in.
+  const finishOnboarding = async () => {
+    await markOnboardingComplete();
+    router.replace('/(auth)/sign-in');
+  };
+
   const goNext = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (isLast) {
-      router.replace('/(auth)');
+      finishOnboarding();
       return;
     }
     flatRef.current?.scrollToIndex({ index: activeIndex + 1, animated: true });
@@ -226,12 +234,12 @@ export default function OnboardingScreen() {
 
   const handleSkip = () => {
     Haptics.selectionAsync();
-    router.replace('/(auth)');
+    finishOnboarding();
   };
 
   const handleSignIn = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace('/(auth)');
+    finishOnboarding();
   };
 
   // Button spring scale
@@ -482,7 +490,7 @@ const il = StyleSheet.create({
     flex: 1,
     fontFamily: Fonts.bodyMedium,
     fontSize: 11,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
@@ -520,7 +528,7 @@ const il = StyleSheet.create({
   timerSub: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 8,
-    color: Colors.muted,
+    color: Colors.mutedText,
     marginTop: 1,
   },
 });
@@ -540,7 +548,7 @@ const styles = StyleSheet.create({
   skipText: {
     fontFamily: Fonts.bodyMedium,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   flatList: {
     flex: 1,
@@ -569,7 +577,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodyRegular,
     fontSize: 15,
     lineHeight: 22,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textAlign: 'center',
   },
   dotsRow: {

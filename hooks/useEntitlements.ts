@@ -12,7 +12,6 @@ interface EntitlementRow {
   plan: 'free' | 'lifetime';
   recipe_count: number;
   youtube_credits: number;
-  ai_credits: number;
   youtube_imports_this_month: number;
   youtube_month_anchor: string | null;
 }
@@ -43,7 +42,7 @@ export function useEntitlements() {
       const { data, error } = await supabase
         .from('entitlements')
         .select(
-          'plan, recipe_count, youtube_credits, ai_credits, youtube_imports_this_month, youtube_month_anchor',
+          'plan, recipe_count, youtube_credits, youtube_imports_this_month, youtube_month_anchor',
         )
         .maybeSingle();
       if (error) throw error;
@@ -55,7 +54,6 @@ export function useEntitlements() {
   const plan = ent?.plan ?? 'free';
   const isLifetime = plan === 'lifetime';
   const recipeCount = ent?.recipe_count ?? 0;
-  const aiCredits = ent?.ai_credits ?? 0;
   const youtubeCredits = ent?.youtube_credits ?? 0;
 
   // Monthly allowance still remaining (treat a stale anchor as a fresh month),
@@ -73,8 +71,13 @@ export function useEntitlements() {
     recipeCount,
     recipeLimit: FREE_RECIPE_LIMIT,
     atRecipeLimit: !isLifetime && recipeCount >= FREE_RECIPE_LIMIT,
+    // YouTube import usage for display: how many of this month's allowance are
+    // spent, the allowance itself, any purchased bonus credits, and the total
+    // still available (allowance left + bonus credits).
+    youtubeUsedThisMonth: usedThisMonth,
+    youtubeAllowance: allowance,
+    youtubeCredits,
     youtubeRemaining,
-    aiCredits,
     isLoading: query.isLoading,
     refetch: query.refetch,
     showPaywall,

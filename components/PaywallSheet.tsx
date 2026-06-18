@@ -1,13 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
-  Modal,
   View,
   Text,
   Pressable,
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -15,85 +13,111 @@ import { useAuth } from '@clerk/clerk-expo';
 import { useQueryClient } from '@tanstack/react-query';
 import { Colors } from '../constants/colors';
 import { Fonts } from '../constants/fonts';
-import { createOrder, type CreateOrderResult, type Product } from '../lib/api/billing';
-import RazorpayCheckoutWebView from './RazorpayCheckoutWebView';
+import { PRODUCT_PRICE_LABEL, type Product } from '../lib/api/billing';
+import type { PaywallReason } from './PaywallProvider';
+import { usePlayBilling } from './PlayBillingProvider';
+import BottomSheet from './BottomSheet';
+
+// Keep in sync with gating.ts / useEntitlements.ts (imported as a hook there would
+// create a provider import cycle, so the cap is mirrored as a plain constant).
+const FREE_RECIPE_LIMIT = 15;
 
 interface Props {
   visible: boolean;
   initialProduct: Product;
+  reason: PaywallReason;
   onClose: () => void;
 }
 
 const LIFETIME_PERKS = [
   'Unlimited saved recipes',
   'Unlimited URL imports',
-  '20 YouTube imports / month',
+  '20 monthly credits (imports + scans)',
   'All non-consumable features',
 ];
 
-const PRODUCT_DESCRIPTION: Record<Product, string> = {
-  lifetime: 'Saveur Lifetime Unlock',
-  yt_credits: '10 YouTube import credits',
-  ai_credits: '50 AI scan credits',
-};
-
-export default function PaywallSheet({ visible, onClose }: Props) {
-  const { getToken } = useAuth();
+export default function PaywallSheet({ visible, reason, onClose }: Props) {
+  const { userId } = useAuth();
   const queryClient = useQueryClient();
+  const { connected, productsByKey, busyProduct, lastGrant, buy } = usePlayBilling();
 
-  const [busyProduct, setBusyProduct] = useState<Product | null>(null);
-  const [checkout, setCheckout] = useState<{ order: CreateOrderResult; product: Product } | null>(
-    null,
-  );
+  // Read the (already-warm) entitlements cache for plan + saved-recipe count. We
+  // read from cache rather than calling useEntitlements() to avoid an import cycle
+  // (useEntitlements → usePaywall → PaywallProvider → here).
+  const cachedEntitlement = queryClient.getQueryData<{
+    plan?: string;
+    recipe_count?: number;
+  } | null>(['entitlements', userId]);
+  const isLifetime = cachedEntitlement?.plan === 'lifetime';
+  const recipeCount = cachedEntitlement?.recipe_count ?? FREE_RECIPE_LIMIT;
 
-  // Drop any half-finished checkout when the sheet is dismissed.
+  // Prefer the Play Store's localized price; fall back to the ₹ label if products
+  // haven't loaded yet (or we're not connected).
+  const lifetimePrice = productsByKey.lifetime?.displayPrice ?? PRODUCT_PRICE_LABEL.lifetime;
+  const creditsPrice = productsByKey.yt_credits?.displayPrice ?? PRODUCT_PRICE_LABEL.yt_credits;
+
+  // Variant flags. recipe_limit only ever fires for free users (lifetime = unlimited
+  // saves), so the Lifetime hero always shows there; the credit top-up is hidden
+  // because buying credits can't raise the saved-recipe cap.
+  const isRecipeLimit = reason === 'recipe_limit';
+  const isOutOfCredits = reason === 'out_of_credits';
+  const showTopUp = !isRecipeLimit;
+
+  const title = isRecipeLimit
+    ? 'Recipe limit reached'
+    : isLifetime
+      ? 'Top up credits'
+      : isOutOfCredits
+        ? 'Out of credits'
+        : 'Unlock Rasoi';
+
+  const intro = isRecipeLimit
+    ? `Your free plan holds ${FREE_RECIPE_LIMIT} saved recipes — you're at ${recipeCount} / ${FREE_RECIPE_LIMIT}.`
+    : isOutOfCredits && !isLifetime
+      ? "You've used all your monthly import credits — top up to keep importing."
+      : null;
+
+  // Close the sheet once a purchase has been verified + granted (PlayBillingProvider
+  // bumps `lastGrant`). Ignore the value present at mount.
+  const lastGrantSeen = useRef(lastGrant);
   useEffect(() => {
-    if (!visible) {
-      setCheckout(null);
-      setBusyProduct(null);
+    if (lastGrant !== lastGrantSeen.current) {
+      lastGrantSeen.current = lastGrant;
+      if (visible) onClose();
     }
-  }, [visible]);
+  }, [lastGrant, visible, onClose]);
 
-  const handleBuy = async (product: Product) => {
+  const handleBuy = (product: Product) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setBusyProduct(product);
-    try {
-      const order = await createOrder(product, () => getToken());
-      setCheckout({ order, product });
-    } catch {
-      Alert.alert('Could not start checkout', 'Please try again in a moment.');
-    } finally {
-      setBusyProduct(null);
-    }
-  };
-
-  const handleSuccess = () => {
-    setCheckout(null);
-    // The webhook grants the entitlement asynchronously; refetch so the new
-    // state lands as soon as it's processed (and again shortly after).
-    queryClient.invalidateQueries({ queryKey: ['entitlements'] });
-    setTimeout(() => queryClient.invalidateQueries({ queryKey: ['entitlements'] }), 2500);
-    onClose();
-    Alert.alert('Payment received', 'Your purchase will be active in a moment.');
+    buy(product);
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <Pressable style={styles.backdropFill} onPress={onClose} />
+    <BottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>{title}</Text>
+        <Pressable hitSlop={10} onPress={onClose}>
+          <Ionicons name="close" size={22} color={Colors.muted} />
+        </Pressable>
+      </View>
 
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+            {/* Plain-language reason so the user knows WHY they hit the wall. */}
+            {intro && <Text style={styles.intro}>{intro}</Text>}
 
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>Unlock Saveur</Text>
-            <Pressable hitSlop={10} onPress={onClose}>
-              <Ionicons name="close" size={22} color={Colors.muted} />
-            </Pressable>
-          </View>
+            {/* Lifetime owners skip the upgrade hero — they already own it and just
+                need consumable top-ups (extra YouTube imports / AI scans). */}
+            {isLifetime && (
+              <View style={styles.lifetimeNote}>
+                <Ionicons name="infinite" size={15} color={Colors.saffron} />
+                <Text style={styles.lifetimeNoteText}>
+                  Lifetime active — top up import credits or AI scans anytime.
+                </Text>
+              </View>
+            )}
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-            {/* ── Hero: Lifetime ── */}
+            {/* ── Hero: Lifetime (hidden for existing lifetime owners) ── */}
+            {!isLifetime && (
             <View style={styles.heroCard}>
               <View style={styles.heroBadge}>
                 <Ionicons name="infinite" size={12} color={Colors.noir} />
@@ -101,7 +125,7 @@ export default function PaywallSheet({ visible, onClose }: Props) {
               </View>
               <Text style={styles.heroName}>Lifetime Unlock</Text>
               <View style={styles.heroPriceRow}>
-                <Text style={styles.heroPrice}>₹499</Text>
+                <Text style={styles.heroPrice}>{lifetimePrice}</Text>
                 <Text style={styles.heroPriceNote}>one-time</Text>
               </View>
               {LIFETIME_PERKS.map((perk) => (
@@ -112,61 +136,63 @@ export default function PaywallSheet({ visible, onClose }: Props) {
               ))}
               <Pressable
                 style={[styles.heroButton, busyProduct === 'lifetime' && styles.buttonBusy]}
-                disabled={busyProduct !== null}
+                disabled={busyProduct !== null || !connected}
                 onPress={() => handleBuy('lifetime')}
               >
                 {busyProduct === 'lifetime' ? (
                   <ActivityIndicator color={Colors.parchment} />
                 ) : (
-                  <Text style={styles.heroButtonText}>Unlock for ₹499</Text>
+                  <Text style={styles.heroButtonText}>Unlock for {lifetimePrice}</Text>
                 )}
               </Pressable>
             </View>
+            )}
 
-            {/* ── Top-ups ── */}
-            <Text style={styles.sectionLabel}>Top-ups</Text>
-            <View style={styles.topupRow}>
-              <TopUpCard
-                icon="logo-youtube"
-                title="YouTube"
-                detail="10 imports"
-                price="₹49"
-                busy={busyProduct === 'yt_credits'}
-                disabled={busyProduct !== null}
-                onPress={() => handleBuy('yt_credits')}
-              />
-              <TopUpCard
-                icon="sparkles"
-                title="AI Scans"
-                detail="50 credits"
-                price="₹99"
-                busy={busyProduct === 'ai_credits'}
-                disabled={busyProduct !== null}
-                onPress={() => handleBuy('ai_credits')}
-              />
-            </View>
+            {/* ── Top-up (hidden on the recipe-limit sheet — credits don't raise
+                the saved-recipe cap, only Lifetime or deleting recipes do) ── */}
+            {showTopUp && (
+              <>
+                <Text style={styles.sectionLabel}>Top-up credits</Text>
+                <View style={styles.topupRow}>
+                  <TopUpCard
+                    icon="ticket-outline"
+                    title="10 Credits"
+                    detail="Imports & calorie scans"
+                    price={creditsPrice}
+                    busy={busyProduct === 'yt_credits'}
+                    disabled={busyProduct !== null || !connected}
+                    onPress={() => handleBuy('yt_credits')}
+                  />
+                </View>
+
+                <Text style={styles.topupHint}>
+                  One pool of credits: a YouTube import or calorie scan uses 1.
+                </Text>
+              </>
+            )}
+
+            {/* The free alternative to upgrading: make room by deleting recipes. */}
+            {isRecipeLimit && (
+              <View style={styles.deleteHint}>
+                <Ionicons name="trash-outline" size={15} color={Colors.mutedText} />
+                <Text style={styles.deleteHintText}>
+                  Or delete recipes you no longer need to free up space.
+                </Text>
+              </View>
+            )}
 
             <View style={styles.secureRow}>
-              <Ionicons name="lock-closed" size={12} color={Colors.muted} />
-              <Text style={styles.secureText}>Secure payment via Razorpay</Text>
+              <Ionicons
+                name={connected ? 'lock-closed' : 'sync'}
+                size={12}
+                color={Colors.muted}
+              />
+              <Text style={styles.secureText}>
+                {connected ? 'Secure payment · Google Play' : 'Connecting to Google Play…'}
+              </Text>
             </View>
-          </ScrollView>
-        </View>
-      </View>
-
-      {checkout && (
-        <RazorpayCheckoutWebView
-          order={checkout.order}
-          description={PRODUCT_DESCRIPTION[checkout.product]}
-          onSuccess={handleSuccess}
-          onDismiss={() => setCheckout(null)}
-          onError={(message) => {
-            setCheckout(null);
-            Alert.alert('Payment failed', message);
-          }}
-        />
-      )}
-    </Modal>
+      </ScrollView>
+    </BottomSheet>
   );
 }
 
@@ -189,9 +215,13 @@ function TopUpCard({
 }) {
   return (
     <Pressable style={styles.topupCard} disabled={disabled} onPress={onPress}>
-      <Ionicons name={icon} size={20} color={Colors.saffron} />
-      <Text style={styles.topupTitle}>{title}</Text>
-      <Text style={styles.topupDetail}>{detail}</Text>
+      <View style={styles.topupIconWrap}>
+        <Ionicons name={icon} size={20} color={Colors.saffron} />
+      </View>
+      <View style={styles.topupText}>
+        <Text style={styles.topupTitle}>{title}</Text>
+        <Text style={styles.topupDetail}>{detail}</Text>
+      </View>
       <View style={styles.topupPricePill}>
         {busy ? (
           <ActivityIndicator color={Colors.parchment} size="small" />
@@ -204,26 +234,9 @@ function TopUpCard({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000099' },
-  backdropFill: { ...StyleSheet.absoluteFillObject },
   sheet: {
-    backgroundColor: Colors.noir,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    borderColor: Colors.muted,
     paddingHorizontal: 20,
-    paddingBottom: 36,
-    paddingTop: 10,
     maxHeight: '88%',
-  },
-  handle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: Colors.muted,
-    marginBottom: 12,
   },
   headerRow: {
     flexDirection: 'row',
@@ -233,6 +246,49 @@ const styles = StyleSheet.create({
   },
   title: { fontFamily: Fonts.displayBold, fontSize: 26, color: Colors.parchment },
   scroll: { paddingTop: 8, gap: 16 },
+
+  // Reason line under the title (why the paywall opened)
+  intro: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 14,
+    lineHeight: 20,
+    color: Colors.mutedText,
+    marginTop: -8,
+  },
+
+  // "delete to free space" hint on the recipe-limit sheet
+  deleteHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 2,
+  },
+  deleteHintText: {
+    flex: 1,
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 13,
+    lineHeight: 18,
+    color: Colors.mutedText,
+  },
+
+  // Lifetime owner note (replaces the hero for existing lifetime users)
+  lifetimeNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.burgundy,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  lifetimeNoteText: {
+    flex: 1,
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 13,
+    color: Colors.parchment,
+  },
 
   // Hero
   heroCard: {
@@ -263,7 +319,7 @@ const styles = StyleSheet.create({
   heroName: { fontFamily: Fonts.displaySemiBold, fontSize: 22, color: Colors.parchment },
   heroPriceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 4 },
   heroPrice: { fontFamily: Fonts.displayBold, fontSize: 34, color: Colors.saffron },
-  heroPriceNote: { fontFamily: Fonts.monoRegular, fontSize: 12, color: Colors.muted },
+  heroPriceNote: { fontFamily: Fonts.monoRegular, fontSize: 12, color: Colors.mutedText },
   perkRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   perkText: { fontFamily: Fonts.bodyRegular, fontSize: 14, color: Colors.parchment },
   heroButton: {
@@ -280,34 +336,53 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontFamily: Fonts.bodyMedium,
     fontSize: 11,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textTransform: 'uppercase',
     letterSpacing: 0.9,
   },
   topupRow: { flexDirection: 'row', gap: 12 },
   topupCard: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
     backgroundColor: Colors.surface,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: Colors.muted,
     padding: 16,
-    gap: 6,
-    alignItems: 'flex-start',
   },
-  topupTitle: { fontFamily: Fonts.bodyBold, fontSize: 15, color: Colors.parchment },
-  topupDetail: { fontFamily: Fonts.bodyRegular, fontSize: 12, color: Colors.muted },
-  topupPricePill: {
-    marginTop: 6,
-    backgroundColor: Colors.muted,
-    borderRadius: 50,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    minWidth: 56,
+  topupIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: Colors.noir,
     alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
-  topupPrice: { fontFamily: Fonts.monoBold, fontSize: 13, color: Colors.parchment },
+  topupText: { flex: 1, gap: 2 },
+  topupTitle: { fontFamily: Fonts.bodyBold, fontSize: 15, color: Colors.parchment },
+  topupDetail: { fontFamily: Fonts.bodyRegular, fontSize: 12, color: Colors.mutedText },
+  topupPricePill: {
+    backgroundColor: Colors.burgundy,
+    borderRadius: 50,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minWidth: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  topupPrice: { fontFamily: Fonts.monoBold, fontSize: 14, color: Colors.parchment },
+
+  topupHint: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 12,
+    color: Colors.mutedText,
+    marginTop: -4,
+  },
 
   secureRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  secureText: { fontFamily: Fonts.bodyRegular, fontSize: 12, color: Colors.muted },
+  secureText: { fontFamily: Fonts.bodyRegular, fontSize: 12, color: Colors.mutedText },
 });

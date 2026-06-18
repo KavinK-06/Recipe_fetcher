@@ -185,7 +185,7 @@ const cookTimerStyles = StyleSheet.create({
   label: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 12,
-    color: Colors.muted,
+    color: Colors.mutedText,
     marginTop: 4,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
@@ -389,16 +389,18 @@ export default function CookModeScreen() {
         translateX.value = withTiming(-SCREEN_WIDTH, { duration: 220 }, () => {
           runOnJS(triggerSwipe)('next');
           translateX.value = SCREEN_WIDTH;
-          translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
+          // Near-critical damping: the next card slides in without wobbling.
+          translateX.value = withSpring(0, { damping: 26, stiffness: 200 });
         });
       } else if (shouldPrev) {
         translateX.value = withTiming(SCREEN_WIDTH, { duration: 220 }, () => {
           runOnJS(triggerSwipe)('prev');
           translateX.value = -SCREEN_WIDTH;
-          translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
+          translateX.value = withSpring(0, { damping: 26, stiffness: 200 });
         });
       } else {
-        translateX.value = withSpring(0, { damping: 16, stiffness: 220 });
+        // Snap the partial drag back, gently.
+        translateX.value = withSpring(0, { damping: 22, stiffness: 220 });
       }
       opacity.value = withTiming(1, { duration: 220 });
     });
@@ -672,7 +674,7 @@ const styles = StyleSheet.create({
     color: Colors.parchment,
   },
   stepCountTotal: {
-    color: Colors.muted,
+    color: Colors.mutedText,
     fontFamily: Fonts.monoRegular,
   },
 
@@ -743,7 +745,7 @@ const styles = StyleSheet.create({
   stepMeta: {
     fontFamily: Fonts.bodyMedium,
     fontSize: 11,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
@@ -818,7 +820,7 @@ const styles = StyleSheet.create({
   swipeHintText: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 10,
-    color: Colors.muted,
+    color: Colors.mutedText,
     letterSpacing: 0.4,
   },
 
@@ -838,7 +840,7 @@ const styles = StyleSheet.create({
   notFoundSub: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 13,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textAlign: 'center',
   },
   notFoundButton: {

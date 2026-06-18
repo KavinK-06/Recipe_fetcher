@@ -141,7 +141,7 @@ export default function VerifyScreen() {
             <View style={styles.logoMark}>
               <Ionicons name="flame" size={22} color={Colors.saffron} />
             </View>
-            <Text style={styles.logoText}>Saveur</Text>
+            <Text style={styles.logoText}>Rasoi</Text>
           </View>
 
           <View style={styles.headingWrap}>
@@ -234,7 +234,7 @@ const styles = StyleSheet.create({
   subheading: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textAlign: 'center',
     lineHeight: 20,
   },
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
   resendPrompt: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   resendLink: {
     fontFamily: Fonts.bodyBold,

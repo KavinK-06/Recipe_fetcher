@@ -132,7 +132,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: Fonts.bodyMedium,
     fontSize: 12,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },

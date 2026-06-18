@@ -66,7 +66,7 @@ colors: {
 ---
 
 ## Overview
-Design a complete, production-grade **React Native mobile app UI** called **"Saveur"** (placeholder name) — a premium AI-powered recipe fetcher and manager. The app lets users import recipes from URLs and social media, save and organise them, and cook with step-by-step guidance.
+Design a complete, production-grade **React Native mobile app UI** called **"Rasoi"** (placeholder name) — a premium AI-powered recipe fetcher and manager. The app lets users import recipes from URLs and social media, save and organise them, and cook with step-by-step guidance.
 
 Design **every screen and route** listed below as individual React Native components with full visual fidelity. Use the design system specified below consistently across all screens.
 
@@ -269,7 +269,7 @@ Start with the component library first, then build each screen in the order list
 
 
 
-# Saveur — Agent Log
+# Rasoi — Agent Log
 
 ## Current Status (as of 2026-06-03)
 
@@ -290,7 +290,7 @@ Start with the component library first, then build each screen in the order list
 - OpenRouter API key: server-side Edge Function env vars ONLY — never in the client bundle
 - `SUPABASE_SERVICE_ROLE_KEY`: auto-available in Edge Functions — do NOT set it manually, never put it in `.env.local`
 - All AI calls via OpenRouter — never direct Anthropic API
-- No TikTok or Instagram import (frontend stubs exist but backend must never implement them)
+- No TikTok or Instagram import. (Instagram was built then **removed entirely on 2026-06-17** — recipes were unclear and ~99% of users only use YouTube; TikTok was never built. The slide/button descriptions below are the frozen original design and still mention them — they are NOT current.)
 
 ### Manual prerequisites still pending before full smoke test
 1. Apply `supabase/migrations/0001_initial_schema.sql` then `0002_rls_policies.sql` via `supabase db push` or Supabase Dashboard SQL Editor
@@ -302,7 +302,7 @@ Start with the component library first, then build each screen in the order list
 
 ## 2026-06-03 — Foundation Setup
 
-Set up the foundation files for the Saveur recipe app. No screens generated yet.
+Set up the foundation files for the Rasoi recipe app. No screens generated yet.
 
 ### Files created
 
@@ -440,7 +440,7 @@ Set up the foundation files for the Saveur recipe app. No screens generated yet.
   - **Settings sections** (Account, App, Support, Sign Out): each section is a surface rounded card with hairline dividers inset to align under text (not the icon). Rows use `FadeInDown` with staggered delays (60 ms increments). Each row has a spring scale on press.
   - Destructive row ("Sign Out") — paprika label, `paprika22` (8% opacity) icon background, no chevron. Routes to `/(auth)` on press.
   - All rows have `sublabel` optional prop for secondary detail text in muted 12 px.
-  - Version string `Saveur v1.0.0` centred at bottom in JetBrains Mono muted.
+  - Version string `Rasoi v1.0.0` centred at bottom in JetBrains Mono muted.
   - `isPro` stub flag — flip to `true` to hide usage meter and upgrade card, show Pro plan badge.
 
 ## 2026-06-03 — Shopping List Screen
@@ -479,7 +479,7 @@ Set up the foundation files for the Saveur recipe app. No screens generated yet.
 ## 2026-06-03 — Home Feed Screen
 
 - **`app/(tabs)/index.tsx`**
-  - Top bar: flame logo mark + "Saveur" wordmark left; search icon + circular avatar right, both routed to their tabs.
+  - Top bar: flame logo mark + "Rasoi" wordmark left; search icon + circular avatar right, both routed to their tabs.
   - Time-aware greeting ("Good morning/afternoon/evening, Chef 👋") + formatted date in muted body text.
   - **Recently Imported**: horizontal `FlatList` of `RecipeCard` (180 px wide each); renders 3 `SkeletonCard`s when `isLoading`.
   - **Import CTA Banner**: `ImportBanner` component — burgundy card with decorative off-screen circles (paprika + saffron tints), clipboard + camera icon buttons, spring scale on press, routes to `/(tabs)/import`.
@@ -492,7 +492,7 @@ Set up the foundation files for the Saveur recipe app. No screens generated yet.
 
 - **`app/(auth)/index.tsx`** — Sign in / sign up screen.
   - `KeyboardAvoidingView` + `ScrollView` so the form clears the keyboard on both platforms.
-  - **Logo**: saffron flame icon in a surface-coloured rounded square + "Saveur" in Cormorant Garamond Bold.
+  - **Logo**: saffron flame icon in a surface-coloured rounded square + "Rasoi" in Cormorant Garamond Bold.
   - **Mode toggle pill**: sliding burgundy thumb animates between "Sign In" and "Sign Up" via `withSpring` on `translateX`; active label turns parchment.
   - **Form fields**: surface bg, muted border that highlights to burgundy on focus; leading Ionicons icon per field; show/hide toggle on the password field.
   - Sign-up mode reveals a "Full name" field above email.
@@ -906,7 +906,7 @@ Shared OpenRouter client utility — the single AI call wrapper every import / A
 
 - **`supabase/functions/_shared/openrouter.ts`** (new) —
   - **`callOpenRouter<T>({ model?, fallbackModel?, systemPrompt, userPrompt, responseFormat?, maxTokens? })`** — POSTs to `https://openrouter.ai/api/v1/chat/completions`.
-    - Headers: `Authorization: Bearer ${OPENROUTER_API_KEY}`, `HTTP-Referer` (`OPENROUTER_REFERER` env, falls back to `https://saveur.app`), `X-Title: Saveur`.
+    - Headers: `Authorization: Bearer ${OPENROUTER_API_KEY}`, `HTTP-Referer` (`OPENROUTER_REFERER` env, falls back to `https://rasoi.app`), `X-Title: Rasoi`.
     - `model` defaults to `meta-llama/llama-3.3-70b-instruct`; `fallbackModel` to `google/gemini-2.5-flash`.
     - When `responseFormat === 'json'`, sends `response_format: { type: 'json_object' }` and `JSON.parse`s the assistant message before returning. Otherwise returns the raw text.
     - 30 s timeout via `AbortController`. On **any** non-2xx or timeout, retries **once** with `fallbackModel`. If the fallback also fails, the error propagates.
@@ -988,9 +988,9 @@ The first real end-to-end imports surfaced two production issues, both now fixed
    - **`CLERK_JWKS_URL` must be the FULL url** (`https://<domain>/.well-known/jwks.json`) — Clerk's dashboard shows only the bare domain, which breaks `new URL()` + the issuer check.
    - Client → function changes need a **full app reload** (Fast Refresh doesn't reliably pick up `lib/api/*` module changes).
 
-2. **YouTube transcript fetching.** The `youtube-transcript` esm.sh lib fails from the cloud (YouTube IP-blocks datacenter/edge IPs). Replaced with **Supadata** (managed transcript API) in **`_shared/transcript.ts`** (`fetchYouTubeTranscript`): handles sync `200`, async `202` jobId polling for >20-min videos (~15s budget), and `206` no-transcript. Needs `SUPADATA_API_KEY`.
+2. **YouTube transcript fetching.** The `youtube-transcript` esm.sh lib fails from the cloud (YouTube IP-blocks datacenter/edge IPs). Fetched via **[transcriptapi.com](https://transcriptapi.com)** (dedicated YouTube transcript API) in **`_shared/transcript.ts`** (`fetchYouTubeTranscript`): `format=text` request → `200` returns the transcript string (1 credit, charged only on success); `404` → no-transcript; `408`/`429`/`503` retried with backoff. Needs `TRANSCRIPTAPI_API_KEY`. _(The import-url web-scrape fallback uses **Supadata** / `SUPADATA_API_KEY` — transcriptapi.com is YouTube-only. Instagram import was removed 2026-06-17.)_
 
-**Status:** Phase 3 (Steps 8–11) code complete and deployed. URL import verified end-to-end; YouTube import pending the Supadata key + a verification run. Next: Step 12 (`ai-summarise`).
+**Status:** Phase 3 (Steps 8–11) code complete and deployed. URL import verified end-to-end; YouTube import pending the transcriptapi.com key + a verification run. Next: Step 12 (`ai-summarise`).
 
 ---
 
@@ -1134,7 +1134,7 @@ supabase functions deploy ai-nutrition --no-verify-jwt
 
 1. Validate `plan` (`400 invalid_plan`). `authenticateRequest` (shared Clerk-JWKS auth).
 2. Map `plan` → `RAZORPAY_PLAN_MONTHLY` / `RAZORPAY_PLAN_YEARLY` env (`500 plan_not_configured` if unset).
-3. Load `users.email` + `display_name` (email is NOT NULL → the Razorpay customer's email; name falls back to the email local-part → `'Saveur User'`).
+3. Load `users.email` + `display_name` (email is NOT NULL → the Razorpay customer's email; name falls back to the email local-part → `'Rasoi User'`).
 4. Load the `subscriptions` row (created by the signup trigger; `500 subscription_not_found` if missing).
 5. If `razorpay_customer_id` is null → `createCustomer` and **persist it first** (before creating the subscription, so the webhook has a reconciliation key even if the next write fails; a failed persist here is safe to `500` since no external subscription exists yet).
 6. `createSubscription` with `total_count` = **12** (monthly) / **1** (yearly).

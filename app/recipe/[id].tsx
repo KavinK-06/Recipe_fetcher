@@ -7,6 +7,7 @@ import {
   Dimensions,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,12 +30,13 @@ import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
 import { getRecipeById } from '../../constants/mockData';
 import { useRecipe } from '../../hooks/useRecipe';
+import { useDeleteRecipe } from '../../hooks/useRecipes';
 import { useRecipeImage } from '../../hooks/useRecipeImage';
-import { useRecipeSummary } from '../../hooks/useRecipeSummary';
 import { rowToUiRecipe, mockToUiRecipe, type UiRecipe } from '../../lib/recipes/uiRecipe';
 import TagChip from '../../components/TagChip';
 import IngredientRow from '../../components/IngredientRow';
 import StepCard from '../../components/StepCard';
+import ConfirmDialog from '../../components/ConfirmDialog';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HERO_HEIGHT = 380;
@@ -62,6 +64,7 @@ function FloatingButton({
   side,
   scrollY,
   topInset,
+  disabled,
 }: {
   icon: React.ComponentProps<typeof Ionicons>['name'];
   filled?: boolean;
@@ -69,6 +72,7 @@ function FloatingButton({
   side: 'left' | 'right';
   scrollY: Animated.SharedValue<number>;
   topInset: number;
+  disabled?: boolean;
 }) {
   const scale = useSharedValue(1);
 
@@ -96,13 +100,14 @@ function FloatingButton({
       ]}
     >
       <Pressable
+        disabled={disabled}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           onPress();
         }}
         onPressIn={() => { scale.value = withSpring(0.9, { damping: 14, stiffness: 320 }); }}
         onPressOut={() => { scale.value = withSpring(1, { damping: 14, stiffness: 320 }); }}
-        style={styles.floatingButtonInner}
+        style={[styles.floatingButtonInner, disabled && { opacity: 0.5 }]}
         hitSlop={6}
       >
         <Ionicons
@@ -188,8 +193,12 @@ function TabSwitcher({
     });
   }, [active, thumbX]);
 
+  // The thumb is one tab wide (width: '50%'), and a percentage translateX is
+  // relative to the element's OWN width — so sliding it to the other tab means
+  // moving a full 100% of its width (0% → 100%), not 50%. With 50% it only
+  // travelled half a tab and parked on the divider ("stuck in between").
   const thumbStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: thumbX.value * 50 + '%' as any }],
+    transform: [{ translateX: thumbX.value * 100 + '%' as any }],
   }));
 
   const handleTap = (t: Tab) => {
@@ -246,48 +255,6 @@ function StartCookingButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-// ── AI summary card ──────────────────────────────────────────────────────────
-function RecipeSummaryCard({
-  text,
-  canGenerate,
-  isLoading,
-  hasError,
-  onGenerate,
-}: {
-  text: string | null;
-  canGenerate: boolean;
-  isLoading: boolean;
-  hasError: boolean;
-  onGenerate: () => void;
-}) {
-  return (
-    <View style={styles.summaryCard}>
-      <View style={styles.summaryHeader}>
-        <Ionicons name="sparkles-outline" size={13} color={Colors.saffron} />
-        <Text style={styles.summaryLabel}>AI Summary</Text>
-      </View>
-      {text ? (
-        <Text style={styles.summaryText}>{text}</Text>
-      ) : isLoading ? (
-        <View style={styles.summaryRow}>
-          <ActivityIndicator color={Colors.saffron} size="small" />
-          <Text style={styles.summaryHint}>Generating…</Text>
-        </View>
-      ) : canGenerate ? (
-        <Pressable style={styles.summaryButton} onPress={onGenerate}>
-          <Ionicons name="sparkles" size={14} color={Colors.parchment} />
-          <Text style={styles.summaryButtonText}>
-            {hasError ? 'Try again' : 'Generate summary'}
-          </Text>
-        </Pressable>
-      ) : null}
-      {hasError && !isLoading ? (
-        <Text style={styles.summaryError}>Couldn’t generate a summary just now.</Text>
-      ) : null}
-    </View>
-  );
-}
-
 // ── Main screen ────────────────────────────────────────────────────────────────
 export default function RecipeDetailScreen() {
   const router = useRouter();
@@ -308,14 +275,13 @@ export default function RecipeDetailScreen() {
   const { url: storedImageUrl } = useRecipeImage(RECIPE?.isReal ? RECIPE.id : undefined);
   const heroImageUrl = storedImageUrl ?? RECIPE?.imageUrl ?? undefined;
 
-  const summary = useRecipeSummary();
-  const summaryText = summary.data ?? RECIPE?.aiSummary ?? null;
+  const deleteRecipe = useDeleteRecipe();
 
   const [servings, setServings] = useState(1);
   const [activeTab, setActiveTab] = useState<Tab>('ingredients');
-  const [isSaved, setIsSaved] = useState(true);
   const [checkedIngredients, setCheckedIngredients] = useState<Set<string>>(new Set());
   const [activeStep, setActiveStep] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Sync the servings adjuster to the recipe's default once it loads / changes.
   useEffect(() => {
@@ -421,14 +387,24 @@ export default function RecipeDetailScreen() {
     });
   };
 
-  const handleSave = () => {
-    setIsSaved((v) => !v);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const handleDelete = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setConfirmDelete(true);
   };
 
-  const handleShare = () => {
-    Haptics.selectionAsync();
-    // Share sheet stub
+  const confirmDeleteRecipe = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    deleteRecipe.mutate(RECIPE.id, {
+      onSuccess: () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setConfirmDelete(false);
+        router.back();
+      },
+      onError: (err) => {
+        setConfirmDelete(false);
+        Alert.alert('Could not delete', err.message ?? 'Please try again.');
+      },
+    });
   };
 
   const handleStartCooking = () => {
@@ -477,23 +453,18 @@ export default function RecipeDetailScreen() {
         scrollY={scrollY}
         topInset={insets.top}
       />
-      <View style={styles.floatingRightGroup}>
-        <FloatingButton
-          icon={isSaved ? 'bookmark' : 'bookmark-outline'}
-          filled={isSaved}
-          onPress={handleSave}
-          side="right"
-          scrollY={scrollY}
-          topInset={insets.top}
-        />
-        <FloatingButton
-          icon="share-social-outline"
-          onPress={handleShare}
-          side="right"
-          scrollY={scrollY}
-          topInset={insets.top}
-        />
-      </View>
+      {RECIPE.isReal && (
+        <View style={styles.floatingRightGroup}>
+          <FloatingButton
+            icon="trash-outline"
+            onPress={handleDelete}
+            disabled={deleteRecipe.isPending}
+            side="right"
+            scrollY={scrollY}
+            topInset={insets.top}
+          />
+        </View>
+      )}
 
       {/* ── Scrollable content ── */}
       <Animated.ScrollView
@@ -567,20 +538,6 @@ export default function RecipeDetailScreen() {
             </View>
           )}
 
-          {/* AI summary (real recipes only; mock recipes have no ai_summary) */}
-          {(RECIPE.isReal || summaryText) && (
-            <RecipeSummaryCard
-              text={summaryText}
-              canGenerate={RECIPE.isReal}
-              isLoading={summary.isPending}
-              hasError={summary.isError}
-              onGenerate={() => {
-                Haptics.selectionAsync();
-                summary.mutate(RECIPE.id);
-              }}
-            />
-          )}
-
           {/* Servings adjuster */}
           <ServingsAdjuster servings={servings} onChange={setServings} />
 
@@ -651,6 +608,16 @@ export default function RecipeDetailScreen() {
         />
         <StartCookingButton onPress={handleStartCooking} />
       </View>
+
+      <ConfirmDialog
+        visible={confirmDelete}
+        title="Delete recipe?"
+        message={`"${RECIPE.title}" will be permanently removed. This can’t be undone.`}
+        confirmLabel="Delete"
+        busy={deleteRecipe.isPending}
+        onConfirm={confirmDeleteRecipe}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </View>
   );
 }
@@ -815,7 +782,7 @@ const styles = StyleSheet.create({
   servingsHint: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 11,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   servingsControl: {
     flexDirection: 'row',
@@ -869,7 +836,7 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontFamily: Fonts.bodyMedium,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   tabLabelActive: {
     color: Colors.parchment,
@@ -877,7 +844,7 @@ const styles = StyleSheet.create({
   tabCount: {
     fontFamily: Fonts.monoMedium,
     fontSize: 11,
-    color: Colors.muted,
+    color: Colors.mutedText,
     backgroundColor: Colors.noir,
     paddingHorizontal: 6,
     paddingVertical: 1,
@@ -944,65 +911,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  // AI summary card
-  summaryCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.muted,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 10,
-  },
-  summaryHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  summaryLabel: {
-    fontFamily: Fonts.bodyMedium,
-    fontSize: 11,
-    color: Colors.saffron,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  summaryText: {
-    fontFamily: Fonts.bodyRegular,
-    fontSize: 14,
-    lineHeight: 21,
-    color: Colors.parchment,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  summaryHint: {
-    fontFamily: Fonts.bodyRegular,
-    fontSize: 13,
-    color: Colors.muted,
-  },
-  summaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 8,
-    backgroundColor: Colors.burgundy,
-    borderRadius: 50,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  summaryButtonText: {
-    fontFamily: Fonts.bodyMedium,
-    fontSize: 13,
-    color: Colors.parchment,
-  },
-  summaryError: {
-    fontFamily: Fonts.bodyRegular,
-    fontSize: 12,
-    color: Colors.paprika,
-  },
-
   // Loading / not-found
   centered: {
     alignItems: 'center',
@@ -1019,13 +927,13 @@ const styles = StyleSheet.create({
   notFoundSub: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 13,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textAlign: 'center',
   },
   notFoundDebug: {
     fontFamily: Fonts.monoRegular,
     fontSize: 10,
-    color: Colors.muted,
+    color: Colors.mutedText,
     opacity: 0.6,
   },
   notFoundButton: {

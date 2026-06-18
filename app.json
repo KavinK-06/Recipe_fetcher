@@ -1,19 +1,21 @@
 {
   "expo": {
-    "name": "Saveur",
-    "slug": "saveur",
+    "name": "Rasoi",
+    "slug": "rasoi",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "saveur",
+    "scheme": "rasoi",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "icon": "./assets/images/icon.png",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.saveur.app"
+      "bundleIdentifier": "com.rasoi.app"
     },
     "android": {
-      "package": "com.saveur.app",
+      "package": "com.rasoi.app",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#1A0A0E"
       }
     },
@@ -22,13 +24,23 @@
       [
         "expo-splash-screen",
         {
+          "image": "./assets/images/splash.png",
+          "imageWidth": 300,
           "backgroundColor": "#1A0A0E",
           "resizeMode": "contain"
         }
       ],
       "expo-asset",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Rasoi uses your photos to scan a dish and estimate its calories.",
+          "cameraPermission": "Rasoi uses your camera to scan a dish and estimate its calories."
+        }
+      ],
+      "expo-iap"
     ],
     "experiments": {
       "typedRoutes": true

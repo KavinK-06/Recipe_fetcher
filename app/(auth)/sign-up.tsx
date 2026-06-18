@@ -31,7 +31,7 @@ function Logo() {
       <View style={styles.logoMark}>
         <Ionicons name="flame" size={22} color={Colors.saffron} />
       </View>
-      <Text style={styles.logoText}>Saveur</Text>
+      <Text style={styles.logoText}>Rasoi</Text>
     </View>
   );
 }
@@ -109,7 +109,7 @@ export default function SignUpScreen() {
 
           <View style={styles.headingWrap}>
             <Text style={styles.heading}>Create account</Text>
-            <Text style={styles.subheading}>Join Saveur and start collecting recipes</Text>
+            <Text style={styles.subheading}>Join Rasoi and start collecting recipes</Text>
           </View>
 
           <View style={styles.form}>
@@ -118,7 +118,7 @@ export default function SignUpScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Full name"
-                placeholderTextColor={Colors.muted}
+                placeholderTextColor={Colors.mutedText}
                 value={name}
                 onChangeText={(v) => { setName(v); setError(null); }}
                 autoCapitalize="words"
@@ -134,7 +134,7 @@ export default function SignUpScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Email address"
-                placeholderTextColor={Colors.muted}
+                placeholderTextColor={Colors.mutedText}
                 value={email}
                 onChangeText={(v) => { setEmail(v); setError(null); }}
                 keyboardType="email-address"
@@ -151,7 +151,7 @@ export default function SignUpScreen() {
               <TextInput
                 style={[styles.input, { flex: 1 }]}
                 placeholder="Password"
-                placeholderTextColor={Colors.muted}
+                placeholderTextColor={Colors.mutedText}
                 value={password}
                 onChangeText={(v) => { setPassword(v); setError(null); }}
                 secureTextEntry={!showPassword}
@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
   subheading: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   form: { gap: 12 },
   inputWrap: {
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
   switchPrompt: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   switchLink: {
     fontFamily: Fonts.bodyBold,

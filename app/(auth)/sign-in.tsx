@@ -31,7 +31,7 @@ function Logo() {
       <View style={styles.logoMark}>
         <Ionicons name="flame" size={22} color={Colors.saffron} />
       </View>
-      <Text style={styles.logoText}>Saveur</Text>
+      <Text style={styles.logoText}>Rasoi</Text>
     </View>
   );
 }
@@ -46,6 +46,11 @@ export default function SignInScreen() {
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // When the account has 2FA enabled, Clerk verifies the password then asks for a
+  // second factor (an emailed code). We flip to a code-entry step instead of the
+  // email/password fields.
+  const [twoFactor, setTwoFactor] = useState(false);
+  const [code, setCode] = useState('');
 
   const submitScale = useSharedValue(1);
   const submitShake = useSharedValue(0);
@@ -78,7 +83,33 @@ export default function SignInScreen() {
       if (result.status === 'complete') {
         await setActive({ session: result.createdSessionId });
         router.replace('/(tabs)');
+        return;
       }
+      // Password OK but the account has 2FA → send the email code and switch to
+      // the code-entry step. (With 2FA off, create() returns 'complete' above and
+      // this is skipped, so the branch is harmless when 2FA isn't in play.)
+      if (result.status === 'needs_second_factor') {
+        const emailFactor = result.supportedSecondFactors?.find(
+          (f) => f.strategy === 'email_code',
+        );
+        if (!emailFactor) {
+          shakeError('This account uses a second factor this app cannot verify yet.');
+          return;
+        }
+        await signIn.prepareSecondFactor({
+          strategy: 'email_code',
+          emailAddressId: (emailFactor as { emailAddressId: string }).emailAddressId,
+        } as never);
+        setCode('');
+        setTwoFactor(true);
+        return;
+      }
+      // Anything else (e.g. needs_first_factor, has no password) — surface it
+      // rather than silently doing nothing (which reads as "the button is dead").
+      console.warn('[sign-in] non-complete status:', result.status, JSON.stringify(result));
+      shakeError(
+        `Couldn't finish signing in (status: ${result.status}). This account may use a different sign-in method.`,
+      );
     } catch (err: unknown) {
       if (isClerkAPIResponseError(err)) {
         shakeError(err.errors[0]?.longMessage ?? err.errors[0]?.message ?? 'Sign in failed.');
@@ -87,6 +118,56 @@ export default function SignInScreen() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Step 2 (only when 2FA is enabled): verify the emailed code.
+  const handleVerifyTwoFactor = async () => {
+    if (!isLoaded) return;
+    if (code.trim().length < 6) {
+      shakeError('Enter the 6-digit code we emailed you.');
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const result = await signIn.attemptSecondFactor({
+        strategy: 'email_code',
+        code: code.trim(),
+      } as never);
+      if (result.status === 'complete') {
+        await setActive({ session: result.createdSessionId });
+        router.replace('/(tabs)');
+      } else {
+        shakeError(`Couldn't verify the code (status: ${result.status}).`);
+      }
+    } catch (err: unknown) {
+      if (isClerkAPIResponseError(err)) {
+        shakeError(err.errors[0]?.longMessage ?? err.errors[0]?.message ?? 'Invalid code.');
+      } else {
+        shakeError('Something went wrong. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendTwoFactor = async () => {
+    if (!isLoaded) return;
+    Haptics.selectionAsync();
+    try {
+      const emailFactor = signIn.supportedSecondFactors?.find(
+        (f) => f.strategy === 'email_code',
+      );
+      await signIn.prepareSecondFactor({
+        strategy: 'email_code',
+        emailAddressId: (emailFactor as { emailAddressId?: string } | undefined)?.emailAddressId,
+      } as never);
+      setError(null);
+      setCode('');
+    } catch {
+      setError('Could not resend the code. Please try again.');
     }
   };
 
@@ -104,81 +185,127 @@ export default function SignInScreen() {
           <Logo />
 
           <View style={styles.headingWrap}>
-            <Text style={styles.heading}>Welcome back</Text>
-            <Text style={styles.subheading}>Sign in to your Saveur account</Text>
+            <Text style={styles.heading}>{twoFactor ? 'Two-step verification' : 'Welcome back'}</Text>
+            <Text style={styles.subheading}>
+              {twoFactor
+                ? `Enter the 6-digit code we emailed to ${email}.`
+                : 'Sign in to your Rasoi account'}
+            </Text>
           </View>
 
-          <View style={styles.form}>
-            <View style={[styles.inputWrap, { borderColor: borderColor('email') }]}>
-              <Ionicons name="mail-outline" size={16} color={Colors.muted} />
-              <TextInput
-                style={styles.input}
-                placeholder="Email address"
-                placeholderTextColor={Colors.muted}
-                value={email}
-                onChangeText={(v) => { setEmail(v); setError(null); }}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoComplete="email"
-                returnKeyType="next"
-                onFocus={() => setFocusedField('email')}
-                onBlur={() => setFocusedField(null)}
-              />
-            </View>
-
-            <View style={[styles.inputWrap, { borderColor: borderColor('password') }]}>
-              <Ionicons name="lock-closed-outline" size={16} color={Colors.muted} />
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                placeholder="Password"
-                placeholderTextColor={Colors.muted}
-                value={password}
-                onChangeText={(v) => { setPassword(v); setError(null); }}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                returnKeyType="done"
-                onSubmitEditing={handleSignIn}
-                onFocus={() => setFocusedField('password')}
-                onBlur={() => setFocusedField(null)}
-              />
-              <Pressable onPress={() => { Haptics.selectionAsync(); setShowPassword((v) => !v); }} hitSlop={8}>
-                <Ionicons
-                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                  size={16}
-                  color={Colors.muted}
+          {twoFactor ? (
+            <View style={styles.form}>
+              <View style={[styles.inputWrap, { borderColor: borderColor('code') }]}>
+                <Ionicons name="keypad-outline" size={16} color={Colors.muted} />
+                <TextInput
+                  style={[styles.input, { letterSpacing: 6, fontFamily: Fonts.monoBold }]}
+                  placeholder="000000"
+                  placeholderTextColor={Colors.mutedText}
+                  value={code}
+                  onChangeText={(v) => { setCode(v.replace(/\D/g, '').slice(0, 6)); setError(null); }}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  returnKeyType="done"
+                  onSubmitEditing={handleVerifyTwoFactor}
+                  onFocus={() => setFocusedField('code')}
+                  onBlur={() => setFocusedField(null)}
+                  autoFocus
                 />
+              </View>
+
+              <Pressable style={styles.forgotWrap} hitSlop={8} onPress={handleResendTwoFactor}>
+                <Text style={styles.forgotText}>Resend code</Text>
               </Pressable>
             </View>
+          ) : (
+            <View style={styles.form}>
+              <View style={[styles.inputWrap, { borderColor: borderColor('email') }]}>
+                <Ionicons name="mail-outline" size={16} color={Colors.muted} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Email address"
+                  placeholderTextColor={Colors.mutedText}
+                  value={email}
+                  onChangeText={(v) => { setEmail(v); setError(null); }}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  returnKeyType="next"
+                  onFocus={() => setFocusedField('email')}
+                  onBlur={() => setFocusedField(null)}
+                />
+              </View>
 
-            <Pressable style={styles.forgotWrap} hitSlop={8} onPress={() => Haptics.selectionAsync()}>
-              <Text style={styles.forgotText}>Forgot password?</Text>
-            </Pressable>
-          </View>
+              <View style={[styles.inputWrap, { borderColor: borderColor('password') }]}>
+                <Ionicons name="lock-closed-outline" size={16} color={Colors.muted} />
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder="Password"
+                  placeholderTextColor={Colors.mutedText}
+                  value={password}
+                  onChangeText={(v) => { setPassword(v); setError(null); }}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  returnKeyType="done"
+                  onSubmitEditing={handleSignIn}
+                  onFocus={() => setFocusedField('password')}
+                  onBlur={() => setFocusedField(null)}
+                />
+                <Pressable onPress={() => { Haptics.selectionAsync(); setShowPassword((v) => !v); }} hitSlop={8}>
+                  <Ionicons
+                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={16}
+                    color={Colors.muted}
+                  />
+                </Pressable>
+              </View>
+
+              <Pressable style={styles.forgotWrap} hitSlop={8} onPress={() => Haptics.selectionAsync()}>
+                <Text style={styles.forgotText}>Forgot password?</Text>
+              </Pressable>
+            </View>
+          )}
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           <Animated.View style={[submitShakeStyle, submitScaleStyle]}>
             <Pressable
               style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
-              onPress={handleSignIn}
+              onPress={twoFactor ? handleVerifyTwoFactor : handleSignIn}
               disabled={loading}
               onPressIn={() => { submitScale.value = withSpring(0.97, { damping: 14, stiffness: 300 }); }}
               onPressOut={() => { submitScale.value = withSpring(1, { damping: 14, stiffness: 300 }); }}
             >
               {loading
                 ? <ActivityIndicator color={Colors.parchment} />
-                : <Text style={styles.primaryButtonText}>Sign In</Text>}
+                : <Text style={styles.primaryButtonText}>{twoFactor ? 'Verify Code' : 'Sign In'}</Text>}
             </Pressable>
           </Animated.View>
 
-          <View style={styles.switchRow}>
-            <Text style={styles.switchPrompt}>Don't have an account? </Text>
-            <Link href="/(auth)/sign-up" asChild>
-              <Pressable hitSlop={8} onPress={() => Haptics.selectionAsync()}>
-                <Text style={styles.switchLink}>Sign Up</Text>
+          {twoFactor ? (
+            <View style={styles.switchRow}>
+              <Pressable
+                hitSlop={8}
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setTwoFactor(false);
+                  setCode('');
+                  setError(null);
+                }}
+              >
+                <Text style={styles.switchLink}>Use a different account</Text>
               </Pressable>
-            </Link>
-          </View>
+            </View>
+          ) : (
+            <View style={styles.switchRow}>
+              <Text style={styles.switchPrompt}>Don't have an account? </Text>
+              <Link href="/(auth)/sign-up" asChild>
+                <Pressable hitSlop={8} onPress={() => Haptics.selectionAsync()}>
+                  <Text style={styles.switchLink}>Sign Up</Text>
+                </Pressable>
+              </Link>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -221,7 +348,7 @@ const styles = StyleSheet.create({
   subheading: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   form: { gap: 12 },
   inputWrap: {
@@ -275,7 +402,7 @@ const styles = StyleSheet.create({
   switchPrompt: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   switchLink: {
     fontFamily: Fonts.bodyBold,

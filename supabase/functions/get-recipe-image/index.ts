@@ -13,9 +13,9 @@ const TAG = 'get-recipe-image';
 
 // Resolves the display URL for a recipe's image. Prefers the stored copy (a
 // short-lived signed URL into the private bucket) and falls back to the origin
-// image_url the recipe was imported with. Auth + ownership are enforced exactly
-// like ai-summarise; the signed URL is minted with the service role (bypasses
-// RLS), so no client ever reads Storage directly.
+// image_url the recipe was imported with. Auth + ownership are enforced like the
+// other per-recipe functions; the signed URL is minted with the service role
+// (bypasses RLS), so no client ever reads Storage directly.
 //
 // Deploy: supabase functions deploy get-recipe-image --no-verify-jwt
 //   (self-verifies the Clerk token via JWKS; the gateway must not pre-reject it —

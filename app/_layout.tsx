@@ -29,6 +29,7 @@ import { Colors } from '../constants/colors';
 import { tokenCache } from '../lib/auth/tokenCache';
 import { useProtectedRoute } from '../hooks/useProtectedRoute';
 import { PaywallProvider } from '../components/PaywallProvider';
+import { PlayBillingProvider } from '../components/PlayBillingProvider';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -57,6 +58,10 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
     // (e.g. cook mode's swipe-between-steps) throws at render time.
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
+        {/* PlayBillingProvider wraps PaywallProvider so the (root-level) purchase
+            listener outlives the paywall sheet and PaywallSheet can read billing
+            state via usePlayBilling(). */}
+        <PlayBillingProvider>
         <PaywallProvider>
           <View style={{ flex: 1, backgroundColor: Colors.noir }}>
             <StatusBar style="light" />
@@ -67,16 +72,21 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
                 animation: 'fade',
               }}
             >
-              <Stack.Screen name="(onboarding)" />
+              {/* "/" entry gate — decides onboarding vs auth vs tabs. */}
+              <Stack.Screen name="index" />
+              {/* No (onboarding)/_layout.tsx, so the route is the leaf
+                  "(onboarding)/welcome", not a "(onboarding)" group. */}
+              <Stack.Screen name="(onboarding)/welcome" />
               <Stack.Screen name="(auth)" />
               <Stack.Screen name="(tabs)" />
               <Stack.Screen name="recipe/[id]" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="cook/[id]" options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="shopping" options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="nutrition" options={{ animation: 'slide_from_bottom' }} />
               <Stack.Screen name="collections/[id]" options={{ animation: 'slide_from_right' }} />
             </Stack>
           </View>
         </PaywallProvider>
+        </PlayBillingProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

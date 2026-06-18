@@ -6,10 +6,9 @@ import {
   Pressable,
   StyleSheet,
   Dimensions,
-  Modal,
   TextInput,
-  KeyboardAvoidingView,
-  Platform,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,112 +18,94 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  withTiming,
   FadeIn,
   FadeInDown,
-  FadeOut,
 } from 'react-native-reanimated';
 import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
-import { COLLECTIONS, Collection } from '../../constants/mockData';
 import CollectionCard from '../../components/CollectionCard';
+import ConfirmDialog from '../../components/ConfirmDialog';
+import BottomSheet from '../../components/BottomSheet';
+import {
+  useCollections,
+  useCreateCollection,
+  useDeleteCollection,
+  type CollectionWithMeta,
+} from '../../hooks/useCollections';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
 
-const INITIAL_COLLECTIONS: Collection[] = COLLECTIONS;
+const pad4 = (urls: string[]): [string?, string?, string?, string?] =>
+  [urls[0], urls[1], urls[2], urls[3]];
 
 // ── New-collection modal ───────────────────────────────────────────────────────
 function NewCollectionModal({
   visible,
+  saving,
   onClose,
   onCreate,
 }: {
   visible: boolean;
+  saving: boolean;
   onClose: () => void;
   onCreate: (name: string) => void;
 }) {
   const [name, setName] = useState('');
-  const sheetScale = useSharedValue(0.94);
-  const sheetOpacity = useSharedValue(0);
 
   React.useEffect(() => {
-    if (visible) {
-      sheetScale.value = withSpring(1, { damping: 16, stiffness: 240 });
-      sheetOpacity.value = withTiming(1, { duration: 200 });
-    } else {
-      sheetScale.value = withSpring(0.94, { damping: 16, stiffness: 240 });
-      sheetOpacity.value = withTiming(0, { duration: 160 });
-    }
-  }, [visible, sheetScale, sheetOpacity]);
-
-  const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: sheetScale.value }],
-    opacity: sheetOpacity.value,
-  }));
+    if (!visible) setName('');
+  }, [visible]);
 
   const handleCreate = () => {
-    if (!name.trim()) return;
+    if (!name.trim() || saving) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onCreate(name.trim());
-    setName('');
-    onClose();
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.modalOverlay}
-      >
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <Animated.View style={[styles.sheet, sheetStyle]}>
-          {/* Handle */}
-          <View style={styles.sheetHandle} />
+    <BottomSheet visible={visible} onClose={onClose} avoidKeyboard sheetStyle={styles.sheet}>
+      <Text style={styles.sheetTitle}>New Collection</Text>
+      <Text style={styles.sheetSub}>Give your collection a name</Text>
 
-          <Text style={styles.sheetTitle}>New Collection</Text>
-          <Text style={styles.sheetSub}>Give your collection a name</Text>
+      <View style={styles.sheetInput}>
+        <Ionicons name="albums-outline" size={16} color={Colors.muted} />
+        <TextInput
+          style={styles.sheetTextInput}
+          placeholder="e.g. Sunday Roasts"
+          placeholderTextColor={Colors.mutedText}
+          value={name}
+          onChangeText={setName}
+          autoFocus
+          returnKeyType="done"
+          onSubmitEditing={handleCreate}
+          autoCapitalize="words"
+          editable={!saving}
+        />
+      </View>
 
-          <View style={styles.sheetInput}>
-            <Ionicons name="albums-outline" size={16} color={Colors.muted} />
-            <TextInput
-              style={styles.sheetTextInput}
-              placeholder="e.g. Sunday Roasts"
-              placeholderTextColor={Colors.muted}
-              value={name}
-              onChangeText={setName}
-              autoFocus
-              returnKeyType="done"
-              onSubmitEditing={handleCreate}
-              autoCapitalize="words"
-            />
-          </View>
-
-          <View style={styles.sheetButtons}>
-            <Pressable
-              style={styles.sheetCancel}
-              onPress={() => {
-                Haptics.selectionAsync();
-                onClose();
-              }}
-            >
-              <Text style={styles.sheetCancelText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.sheetCreate, !name.trim() && styles.sheetCreateDisabled]}
-              onPress={handleCreate}
-            >
-              <Text style={styles.sheetCreateText}>Create</Text>
-            </Pressable>
-          </View>
-        </Animated.View>
-      </KeyboardAvoidingView>
-    </Modal>
+      <View style={styles.sheetButtons}>
+        <Pressable
+          style={styles.sheetCancel}
+          onPress={() => {
+            Haptics.selectionAsync();
+            onClose();
+          }}
+        >
+          <Text style={styles.sheetCancelText}>Cancel</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.sheetCreate, (!name.trim() || saving) && styles.sheetCreateDisabled]}
+          onPress={handleCreate}
+        >
+          {saving ? (
+            <ActivityIndicator color={Colors.parchment} size="small" />
+          ) : (
+            <Text style={styles.sheetCreateText}>Create</Text>
+          )}
+        </Pressable>
+      </View>
+    </BottomSheet>
   );
 }
 
@@ -134,21 +115,8 @@ function FAB({ onPress }: { onPress: () => void }) {
   const rotate = useSharedValue(0);
 
   const animStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: scale.value },
-      { rotate: `${rotate.value}deg` },
-    ],
+    transform: [{ scale: scale.value }, { rotate: `${rotate.value}deg` }],
   }));
-
-  const handlePressIn = () => {
-    scale.value = withSpring(0.9, { damping: 12, stiffness: 320 });
-    rotate.value = withSpring(45, { damping: 12, stiffness: 280 });
-  };
-
-  const handlePressOut = () => {
-    scale.value = withSpring(1, { damping: 12, stiffness: 320 });
-    rotate.value = withSpring(0, { damping: 12, stiffness: 280 });
-  };
 
   return (
     <Animated.View style={[styles.fab, animStyle]}>
@@ -157,8 +125,14 @@ function FAB({ onPress }: { onPress: () => void }) {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           onPress();
         }}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
+        onPressIn={() => {
+          scale.value = withSpring(0.9, { damping: 12, stiffness: 320 });
+          rotate.value = withSpring(45, { damping: 12, stiffness: 280 });
+        }}
+        onPressOut={() => {
+          scale.value = withSpring(1, { damping: 12, stiffness: 320 });
+          rotate.value = withSpring(0, { damping: 12, stiffness: 280 });
+        }}
         style={styles.fabInner}
       >
         <Ionicons name="add" size={28} color={Colors.parchment} />
@@ -195,23 +169,40 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 // ── Main screen ────────────────────────────────────────────────────────────────
 export default function CollectionsScreen() {
   const router = useRouter();
-  const [collections, setCollections] = useState<Collection[]>(INITIAL_COLLECTIONS);
+  const { collections, isLoading } = useCollections();
+  const createCollection = useCreateCollection();
+  const deleteCollection = useDeleteCollection();
   const [modalVisible, setModalVisible] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<CollectionWithMeta | null>(null);
 
   const openModal = () => setModalVisible(true);
   const closeModal = () => setModalVisible(false);
 
   const handleCreate = (name: string) => {
-    const newCollection: Collection = {
-      id: Date.now().toString(),
-      name,
-      recipeCount: 0,
-      imageUris: [undefined, undefined, undefined, undefined],
-    };
-    setCollections((prev) => [newCollection, ...prev]);
+    createCollection.mutate(name, {
+      onSuccess: () => closeModal(),
+      onError: (e) => Alert.alert('Could not create', e.message),
+    });
   };
 
-  const renderItem = ({ item, index }: { item: Collection; index: number }) => (
+  const confirmDelete = (item: CollectionWithMeta) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setPendingDelete(item);
+  };
+
+  const handleDeleteConfirmed = () => {
+    if (!pendingDelete) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    deleteCollection.mutate(pendingDelete.id, {
+      onSuccess: () => setPendingDelete(null),
+      onError: (e) => {
+        setPendingDelete(null);
+        Alert.alert('Could not delete', e.message);
+      },
+    });
+  };
+
+  const renderItem = ({ item, index }: { item: CollectionWithMeta; index: number }) => (
     <Animated.View
       entering={FadeInDown.delay(index * 60).duration(280).springify()}
       style={styles.cardWrap}
@@ -219,18 +210,18 @@ export default function CollectionsScreen() {
       <CollectionCard
         name={item.name}
         recipeCount={item.recipeCount}
-        imageUris={item.imageUris}
+        imageUris={pad4(item.coverImages)}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           router.push(`/collections/${item.id}` as any);
         }}
+        onLongPress={() => confirmDelete(item)}
       />
     </Animated.View>
   );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Collections</Text>
         <Text style={styles.headerCount}>
@@ -238,7 +229,11 @@ export default function CollectionsScreen() {
         </Text>
       </View>
 
-      {collections.length === 0 ? (
+      {isLoading ? (
+        <View style={styles.centerFill}>
+          <ActivityIndicator color={Colors.saffron} />
+        </View>
+      ) : collections.length === 0 ? (
         <EmptyState onCreate={openModal} />
       ) : (
         <FlatList
@@ -252,13 +247,28 @@ export default function CollectionsScreen() {
         />
       )}
 
-      {/* FAB — always visible when collections exist */}
-      {collections.length > 0 && <FAB onPress={openModal} />}
+      {!isLoading && collections.length > 0 && <FAB onPress={openModal} />}
 
       <NewCollectionModal
         visible={modalVisible}
+        saving={createCollection.isPending}
         onClose={closeModal}
         onCreate={handleCreate}
+      />
+
+      <ConfirmDialog
+        visible={pendingDelete !== null}
+        icon="albums-outline"
+        title="Delete collection?"
+        message={
+          pendingDelete
+            ? `"${pendingDelete.name}" will be removed. Your recipes are kept.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        busy={deleteCollection.isPending}
+        onConfirm={handleDeleteConfirmed}
+        onCancel={() => setPendingDelete(null)}
       />
     </SafeAreaView>
   );
@@ -269,8 +279,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.noir,
   },
-
-  // Header
   header: {
     paddingHorizontal: 20,
     paddingTop: 12,
@@ -287,13 +295,16 @@ const styles = StyleSheet.create({
   headerCount: {
     fontFamily: Fonts.monoRegular,
     fontSize: 12,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
-
-  // Grid
+  centerFill: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   list: {
     paddingHorizontal: 16,
-    paddingBottom: 100, // clear FAB
+    paddingBottom: 100,
     gap: 14,
   },
   row: {
@@ -303,8 +314,6 @@ const styles = StyleSheet.create({
   cardWrap: {
     width: CARD_WIDTH,
   },
-
-  // FAB
   fab: {
     position: 'absolute',
     bottom: 28,
@@ -323,31 +332,12 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
   },
-
-  // Modal sheet
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(26,10,14,0.72)',
-  },
   sheet: {
     backgroundColor: Colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+    paddingHorizontal: 24,
+    paddingTop: 4,
+    paddingBottom: 28,
     gap: 14,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: Colors.muted,
-  },
-  sheetHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: Colors.muted,
-    alignSelf: 'center',
-    marginBottom: 4,
   },
   sheetTitle: {
     fontFamily: Fonts.displayBold,
@@ -357,7 +347,7 @@ const styles = StyleSheet.create({
   sheetSub: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
-    color: Colors.muted,
+    color: Colors.mutedText,
     marginTop: -6,
   },
   sheetInput: {
@@ -394,7 +384,7 @@ const styles = StyleSheet.create({
   sheetCancelText: {
     fontFamily: Fonts.bodyMedium,
     fontSize: 15,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   sheetCreate: {
     flex: 1,
@@ -411,8 +401,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.parchment,
   },
-
-  // Empty state
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
@@ -442,7 +430,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodyRegular,
     fontSize: 14,
     lineHeight: 21,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textAlign: 'center',
   },
   emptyButton: {

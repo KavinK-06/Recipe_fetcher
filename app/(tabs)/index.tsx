@@ -22,6 +22,7 @@ import { Fonts } from '../../constants/fonts';
 import { useRecipes } from '../../hooks/useRecipes';
 import type { RecipeRow } from '../../lib/api/import';
 import RecipeCard from '../../components/RecipeCard';
+import RecipeActionsSheet from '../../components/RecipeActionsSheet';
 import SkeletonCard from '../../components/SkeletonCard';
 import TagChip from '../../components/TagChip';
 
@@ -77,7 +78,7 @@ function ImportBanner({ onPress }: { onPress: () => void }) {
           <View style={styles.bannerLeft}>
             <Text style={styles.bannerLabel}>Import a recipe</Text>
             <Text style={styles.bannerSub}>
-              Paste a link or share from Instagram
+              Paste a link or import from YouTube
             </Text>
           </View>
           <View style={styles.bannerIcons}>
@@ -125,7 +126,7 @@ function EmptyRecipes({ onImport }: { onImport: () => void }) {
       </View>
       <Text style={styles.emptyTitle}>No recipes yet</Text>
       <Text style={styles.emptySub}>
-        Import your first recipe from a link or YouTube video to start your collection.
+        Import your first recipe from a link, a photo, or a YouTube video to start your collection.
       </Text>
       <Pressable style={styles.emptyButton} onPress={onImport}>
         <Ionicons name="add" size={18} color={Colors.parchment} />
@@ -142,16 +143,8 @@ export default function HomeScreen() {
   const recent = recipes.slice(0, 5);
   const isEmpty = !isLoading && recipes.length === 0;
 
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [menuRecipe, setMenuRecipe] = useState<{ id: string; title: string } | null>(null);
   const [activeTag, setActiveTag] = useState('All');
-
-  const toggleSave = (id: string) => {
-    setSavedIds((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
 
   const goToRecipe = (id: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -162,6 +155,110 @@ export default function HomeScreen() {
     router.push('/(tabs)/import' as any);
   };
 
+  const renderRecipe = ({ item }: { item: RecipeRow }) => (
+    <RecipeCard
+      id={item.id}
+      title={item.title}
+      imageUri={item.image_url ?? ''}
+      cookTime={cookTimeLabel(item.cook_time_minutes)}
+      onPress={() => goToRecipe(item.id)}
+      onMenuPress={() => setMenuRecipe({ id: item.id, title: item.title })}
+      style={styles.gridCard}
+    />
+  );
+
+  // Everything above the "Your Recipes" grid rides in the FlatList header, so the
+  // grid itself stays virtualized (only on-screen cards mount). The horizontal
+  // "Recently Imported" / "Browse" lists are a different orientation, so nesting
+  // them in the header is fine — RN only warns on same-orientation nesting.
+  const listHeader = (
+    <>
+      {/* ── Greeting ── */}
+      <View style={styles.greeting}>
+        <Text style={styles.greetingText}>
+          {greeting()}, Chef 👋
+        </Text>
+        <Text style={styles.greetingDate}>{formattedDate()}</Text>
+      </View>
+
+      {/* ── Recently Imported ── */}
+      <View style={styles.section}>
+        <SectionHeader
+          title="Recently Imported"
+          actionLabel="See all"
+          onAction={() => router.push('/(tabs)/search' as any)}
+        />
+        {isLoading ? (
+          <FlatList
+            horizontal
+            data={[1, 2, 3]}
+            keyExtractor={(i) => String(i)}
+            renderItem={() => (
+              <SkeletonCard style={styles.recentCard} />
+            )}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.recentList}
+            scrollEnabled={false}
+          />
+        ) : (
+          <FlatList
+            horizontal
+            data={recent}
+            keyExtractor={(r) => r.id}
+            renderItem={({ item }: { item: RecipeRow }) => (
+              <RecipeCard
+                id={item.id}
+                title={item.title}
+                imageUri={item.image_url ?? ''}
+                cookTime={cookTimeLabel(item.cook_time_minutes)}
+                onPress={() => goToRecipe(item.id)}
+                onMenuPress={() => setMenuRecipe({ id: item.id, title: item.title })}
+                style={styles.recentCard}
+              />
+            )}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.recentList}
+            ListEmptyComponent={
+              isEmpty ? <Text style={styles.recentEmpty}>Nothing here yet</Text> : null
+            }
+          />
+        )}
+      </View>
+
+      {/* ── Import CTA ── */}
+      <View style={styles.section}>
+        <ImportBanner onPress={goToImport} />
+      </View>
+
+      {/* ── Collections filter row ── */}
+      <View style={styles.section}>
+        <SectionHeader title="Browse" />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tagRow}
+        >
+          {COLLECTION_TAGS.map((tag) => (
+            <TagChip
+              key={tag}
+              label={tag}
+              variant={activeTag === tag ? 'active' : 'default'}
+              onPress={() => {
+                setActiveTag(tag);
+                Haptics.selectionAsync();
+              }}
+            />
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* ── Your Recipes header (grid rows follow as FlatList items) ── */}
+      <View style={styles.gridHeader}>
+        <SectionHeader title="Your Recipes" actionLabel="Filter" />
+      </View>
+    </>
+  );
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── Top bar ── */}
@@ -170,7 +267,7 @@ export default function HomeScreen() {
           <View style={styles.logoMark}>
             <Ionicons name="flame" size={16} color={Colors.saffron} />
           </View>
-          <Text style={styles.logoText}>Saveur</Text>
+          <Text style={styles.logoText}>Rasoi</Text>
         </View>
         <View style={styles.topBarRight}>
           <Pressable
@@ -197,124 +294,36 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* ── Greeting ── */}
-        <View style={styles.greeting}>
-          <Text style={styles.greetingText}>
-            {greeting()}, Chef 👋
-          </Text>
-          <Text style={styles.greetingDate}>{formattedDate()}</Text>
-        </View>
-
-        {/* ── Recently Imported ── */}
-        <View style={styles.section}>
-          <SectionHeader
-            title="Recently Imported"
-            actionLabel="See all"
-            onAction={() => router.push('/(tabs)/collections' as any)}
-          />
-          {isLoading ? (
-            <FlatList
-              horizontal
-              data={[1, 2, 3]}
-              keyExtractor={(i) => String(i)}
-              renderItem={() => (
-                <SkeletonCard style={styles.recentCard} />
-              )}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.recentList}
-              scrollEnabled={false}
-            />
-          ) : (
-            <FlatList
-              horizontal
-              data={recent}
-              keyExtractor={(r) => r.id}
-              renderItem={({ item }: { item: RecipeRow }) => (
-                <RecipeCard
-                  id={item.id}
-                  title={item.title}
-                  imageUri={item.image_url ?? ''}
-                  cookTime={cookTimeLabel(item.cook_time_minutes)}
-                  isSaved={savedIds.has(item.id)}
-                  onPress={() => goToRecipe(item.id)}
-                  onSavePress={toggleSave}
-                  style={styles.recentCard}
-                />
-              )}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.recentList}
-              ListEmptyComponent={
-                isEmpty ? <Text style={styles.recentEmpty}>Nothing here yet</Text> : null
-              }
-            />
-          )}
-        </View>
-
-        {/* ── Import CTA ── */}
-        <View style={styles.section}>
-          <ImportBanner onPress={goToImport} />
-        </View>
-
-        {/* ── Collections filter row ── */}
-        <View style={styles.section}>
-          <SectionHeader title="Browse" />
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.tagRow}
-          >
-            {COLLECTION_TAGS.map((tag) => (
-              <TagChip
-                key={tag}
-                label={tag}
-                variant={activeTag === tag ? 'active' : 'default'}
-                onPress={() => {
-                  setActiveTag(tag);
-                  Haptics.selectionAsync();
-                }}
-              />
-            ))}
-          </ScrollView>
-        </View>
-
-        {/* ── Recipe grid ── */}
-        <View style={styles.section}>
-          <SectionHeader
-            title="Your Recipes"
-            actionLabel="Filter"
-          />
-          {isLoading ? (
+      <FlatList
+        data={isLoading ? [] : recipes}
+        keyExtractor={(item) => item.id}
+        renderItem={renderRecipe}
+        numColumns={2}
+        columnWrapperStyle={styles.gridRow}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={
+          isLoading ? (
             <View style={styles.grid}>
               {[1, 2, 3, 4].map((i) => (
                 <SkeletonCard key={i} style={styles.gridCard} />
               ))}
             </View>
-          ) : isEmpty ? (
-            <EmptyRecipes onImport={goToImport} />
           ) : (
-            <View style={styles.grid}>
-              {recipes.map((item) => (
-                <RecipeCard
-                  key={item.id}
-                  id={item.id}
-                  title={item.title}
-                  imageUri={item.image_url ?? ''}
-                  cookTime={cookTimeLabel(item.cook_time_minutes)}
-                  isSaved={savedIds.has(item.id)}
-                  onPress={() => goToRecipe(item.id)}
-                  onSavePress={toggleSave}
-                  style={styles.gridCard}
-                />
-              ))}
-            </View>
-          )}
-        </View>
-      </ScrollView>
+            <EmptyRecipes onImport={goToImport} />
+          )
+        }
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        initialNumToRender={6}
+        windowSize={7}
+        removeClippedSubviews
+      />
+
+      <RecipeActionsSheet
+        visible={menuRecipe !== null}
+        recipe={menuRecipe}
+        onClose={() => setMenuRecipe(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -373,13 +382,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Scroll
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
+  // FlatList content
+  listContent: {
     paddingBottom: 32,
-    gap: 4,
   },
 
   // Greeting
@@ -396,7 +401,7 @@ const styles = StyleSheet.create({
   greetingDate: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 13,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
 
   // Section
@@ -495,7 +500,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // 2-col grid
+  // "Your Recipes" header (spacing the grid section used to provide)
+  gridHeader: {
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  // FlatList row of 2 cards: matches the old flex-wrap grid's 16px gutters,
+  // 12px column gap, and 12px between rows.
+  gridRow: {
+    paddingHorizontal: 16,
+    gap: 12,
+    marginBottom: 12,
+  },
+  // Skeleton / fallback grid (rendered as ListEmptyComponent, not virtualized).
   grid: {
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -510,7 +527,7 @@ const styles = StyleSheet.create({
   recentEmpty: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 13,
-    color: Colors.muted,
+    color: Colors.mutedText,
     paddingHorizontal: 20,
   },
   empty: {
@@ -539,7 +556,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodyRegular,
     fontSize: 13,
     lineHeight: 19,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textAlign: 'center',
   },
   emptyButton: {

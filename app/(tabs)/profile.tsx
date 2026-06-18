@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,16 @@ import {
   Pressable,
   StyleSheet,
   Platform,
+  Alert,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useAuth } from '@clerk/clerk-expo';
+import * as WebBrowser from 'expo-web-browser';
+import { useAuth, useUser } from '@clerk/clerk-expo';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -22,15 +26,28 @@ import Animated, {
 import { Colors } from '../../constants/colors';
 import { Fonts } from '../../constants/fonts';
 import ProBadge from '../../components/ProBadge';
+import ConfirmDialog from '../../components/ConfirmDialog';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { deleteAccount, AccountError } from '../../lib/api/account';
 
 const APP_VERSION = '1.0.0';
 
+// Store-compliance links. Both Play and the App Store require a reachable
+// Privacy Policy + Terms (EULA) and a support contact. Swap these placeholder
+// URLs for the real hosted pages before submitting for review.
+const PRIVACY_URL = 'https://rasoi.app/privacy';
+const TERMS_URL = 'https://rasoi.app/terms';
+const SUPPORT_EMAIL = 'kavinninja2006@gmail.com';
+
 // ── Avatar ─────────────────────────────────────────────────────────────────────
-function Avatar({ initials }: { initials: string }) {
+function Avatar({ initials, imageUrl }: { initials: string; imageUrl?: string | null }) {
   return (
     <View style={styles.avatar}>
-      <Text style={styles.avatarInitials}>{initials}</Text>
+      {imageUrl ? (
+        <Image source={{ uri: imageUrl }} contentFit="cover" transition={200} style={styles.avatarImage} />
+      ) : (
+        <Text style={styles.avatarInitials}>{initials}</Text>
+      )}
       <View style={styles.avatarBadge}>
         <Ionicons name="camera" size={10} color={Colors.parchment} />
       </View>
@@ -38,10 +55,23 @@ function Avatar({ initials }: { initials: string }) {
   );
 }
 
+/** Best-effort initials from a display name or email local-part. */
+function initialsFor(name: string | null | undefined, email: string | null | undefined): string {
+  const base = (name ?? '').trim() || (email ?? '').split('@')[0] || '';
+  const parts = base.split(/[\s._-]+/).filter(Boolean);
+  if (parts.length === 0) return '🍳';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 // ── Usage meter ────────────────────────────────────────────────────────────────
 function UsageMeter({ used, limit }: { used: number; limit: number }) {
-  const pct = used / limit;
+  // Credit imports (YouTube) bump the saved count past the free cap, so `used`
+  // can exceed `limit` — clamp the bar and never show a negative remaining.
+  const pct = limit > 0 ? Math.min(used / limit, 1) : 0;
   const isNearLimit = pct >= 0.7;
+  const remaining = Math.max(0, limit - used);
+  const atLimit = used >= limit;
 
   const barWidth = useSharedValue(0);
   React.useEffect(() => {
@@ -71,9 +101,75 @@ function UsageMeter({ used, limit }: { used: number; limit: number }) {
       </View>
       {isNearLimit && (
         <Text style={styles.usageHint}>
-          {limit - used} import{limit - used !== 1 ? 's' : ''} remaining on the free plan
+          {atLimit
+            ? 'Limit reached — delete a recipe or upgrade to add more'
+            : `${remaining} import${remaining !== 1 ? 's' : ''} remaining on the free plan`}
         </Text>
       )}
+    </View>
+  );
+}
+
+// ── YouTube imports meter ────────────────────────────────────────────────────
+function YoutubeMeter({
+  used,
+  allowance,
+  bonus,
+  remaining,
+  onGetMore,
+}: {
+  used: number;
+  allowance: number;
+  bonus: number;
+  remaining: number;
+  onGetMore: () => void;
+}) {
+  const pct = allowance > 0 ? Math.min(used / allowance, 1) : 0;
+  const isNearLimit = pct >= 0.7;
+
+  const barWidth = useSharedValue(0);
+  React.useEffect(() => {
+    barWidth.value = withTiming(pct, { duration: 700 });
+  }, [pct, barWidth]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    width: `${barWidth.value * 100}%`,
+  }));
+
+  return (
+    <View style={styles.usageCard}>
+      <View style={styles.usageRow}>
+        <View style={styles.usageLabelRow}>
+          <Ionicons name="film-outline" size={14} color={Colors.paprika} />
+          <Text style={styles.usageLabel}>Import credits this month</Text>
+        </View>
+        <Text style={[styles.usageCount, isNearLimit && styles.usageCountWarning]}>
+          {used} / {allowance}
+        </Text>
+      </View>
+      <View style={styles.usageTrack}>
+        <Animated.View
+          style={[styles.usageFill, barStyle, isNearLimit && styles.usageFillWarning]}
+        />
+      </View>
+      <Text style={styles.usageCostHint}>
+        YouTube video 1 credit · calorie scan 1 credit
+      </Text>
+      <View style={styles.usageFootRow}>
+        <Text style={styles.usageHintMuted}>
+          {remaining} credit{remaining !== 1 ? 's' : ''} left
+          {bonus > 0 ? ` · ${bonus} bonus credit${bonus !== 1 ? 's' : ''} included` : ''}
+        </Text>
+        <Pressable
+          hitSlop={8}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            onGetMore();
+          }}
+        >
+          <Text style={styles.usageGetMore}>Get more</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -107,37 +203,42 @@ function SettingsRow({
   }));
 
   return (
-    <Animated.View entering={FadeInDown.delay(delay).duration(260).springify()} style={animStyle}>
-      <Pressable
-        style={styles.settingsRow}
-        onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          onPress?.();
-        }}
-        onPressIn={() => {
-          scale.value = withSpring(0.985, { damping: 14, stiffness: 300 });
-        }}
-        onPressOut={() => {
-          scale.value = withSpring(1, { damping: 14, stiffness: 300 });
-        }}
-      >
-        <View style={[styles.settingsIconWrap, { backgroundColor: iconBg }]}>
-          <Ionicons
-            name={icon}
-            size={17}
-            color={destructive ? Colors.paprika : Colors.parchment}
-          />
-        </View>
-        <View style={styles.settingsText}>
-          <Text style={[styles.settingsLabel, destructive && styles.settingsLabelDestructive]}>
-            {label}
-          </Text>
-          {sublabel ? <Text style={styles.settingsSublabel}>{sublabel}</Text> : null}
-        </View>
-        {!destructive && (
-          <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
-        )}
-      </Pressable>
+    // Entering animation (FadeInDown also drives translateY) goes on the OUTER
+    // wrapper; the press-scale transform goes on an INNER view — keeping both
+    // transforms off the same node so the entry animation can't clobber the scale.
+    <Animated.View entering={FadeInDown.delay(delay).duration(260).springify()}>
+      <Animated.View style={animStyle}>
+        <Pressable
+          style={styles.settingsRow}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            onPress?.();
+          }}
+          onPressIn={() => {
+            scale.value = withSpring(0.985, { damping: 14, stiffness: 300 });
+          }}
+          onPressOut={() => {
+            scale.value = withSpring(1, { damping: 14, stiffness: 300 });
+          }}
+        >
+          <View style={[styles.settingsIconWrap, { backgroundColor: iconBg }]}>
+            <Ionicons
+              name={icon}
+              size={17}
+              color={destructive ? Colors.paprika : Colors.parchment}
+            />
+          </View>
+          <View style={styles.settingsText}>
+            <Text style={[styles.settingsLabel, destructive && styles.settingsLabelDestructive]}>
+              {label}
+            </Text>
+            {sublabel ? <Text style={styles.settingsSublabel}>{sublabel}</Text> : null}
+          </View>
+          {!destructive && (
+            <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
+          )}
+        </Pressable>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -153,8 +254,46 @@ function SectionCard({ children }: { children: React.ReactNode }) {
 // ── Main screen ────────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
-  const { isLifetime, recipeCount, recipeLimit, showPaywall } = useEntitlements();
+  const { signOut, getToken } = useAuth();
+  const { user } = useUser();
+
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const {
+    isLifetime,
+    recipeCount,
+    recipeLimit,
+    youtubeUsedThisMonth,
+    youtubeAllowance,
+    youtubeCredits,
+    youtubeRemaining,
+    showPaywall,
+  } = useEntitlements();
+
+  const displayName =
+    user?.fullName ?? user?.firstName ?? user?.username ?? 'Chef';
+  const email = user?.primaryEmailAddress?.emailAddress ?? '';
+  const initials = initialsFor(user?.fullName ?? user?.firstName, email);
+
+  const openUrl = async (url: string) => {
+    try {
+      await WebBrowser.openBrowserAsync(url);
+    } catch {
+      Alert.alert('Could not open link', 'Please try again later.');
+    }
+  };
+
+  const handleContactSupport = async () => {
+    const subject = encodeURIComponent(`Rasoi support (v${APP_VERSION})`);
+    const url = `mailto:${SUPPORT_EMAIL}?subject=${subject}`;
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (!canOpen) throw new Error('no mail client');
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('No email app found', `You can reach us at ${SUPPORT_EMAIL}.`);
+    }
+  };
 
   const handleSignOut = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -168,6 +307,29 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleDeleteAccount = async () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    setDeleting(true);
+    try {
+      // Wipes all data + the Clerk identity server-side. The session is invalid
+      // afterwards, but still sign out locally to clear the cached token.
+      await deleteAccount(getToken);
+      await signOut().catch(() => {});
+      setConfirmDelete(false);
+      router.replace('/(auth)/sign-in');
+    } catch (err) {
+      setDeleting(false);
+      setConfirmDelete(false);
+      const code = err instanceof AccountError ? err.code : 'unknown';
+      Alert.alert(
+        'Could not delete account',
+        code === 'not_configured'
+          ? 'Account deletion is temporarily unavailable. Please try again later or contact support.'
+          : 'Something went wrong while deleting your account. Please try again, or contact support if it keeps happening.',
+      );
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -177,9 +339,6 @@ export default function ProfileScreen() {
         {/* ── Header title ── */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Profile</Text>
-          <Pressable hitSlop={8} onPress={() => Haptics.selectionAsync()}>
-            <Ionicons name="settings-outline" size={22} color={Colors.muted} />
-          </Pressable>
         </View>
 
         {/* ── Avatar + identity ── */}
@@ -187,10 +346,10 @@ export default function ProfileScreen() {
           entering={FadeInDown.duration(300).springify()}
           style={styles.identityBlock}
         >
-          <Avatar initials="CK" />
+          <Avatar initials={initials} imageUrl={user?.imageUrl} />
           <View style={styles.identityText}>
-            <Text style={styles.identityName}>Chef Kavin</Text>
-            <Text style={styles.identityEmail}>kavinninja2006@gmail.com</Text>
+            <Text style={styles.identityName} numberOfLines={1}>{displayName}</Text>
+            {email ? <Text style={styles.identityEmail} numberOfLines={1}>{email}</Text> : null}
             {!isLifetime && (
               <View style={styles.freePlanRow}>
                 <Text style={styles.freePlanLabel}>Free Plan</Text>
@@ -212,6 +371,17 @@ export default function ProfileScreen() {
           </Animated.View>
         )}
 
+        {/* ── YouTube imports meter (free + lifetime: both have a monthly cap) ── */}
+        <Animated.View entering={FadeInDown.delay(90).duration(280).springify()}>
+          <YoutubeMeter
+            used={youtubeUsedThisMonth}
+            allowance={youtubeAllowance}
+            bonus={youtubeCredits}
+            remaining={youtubeRemaining}
+            onGetMore={() => showPaywall('yt_credits', 'out_of_credits')}
+          />
+        </Animated.View>
+
         {/* ── Upgrade CTA (free users only) ── */}
         {!isLifetime && (
           <Animated.View entering={FadeInDown.delay(120).duration(280).springify()}>
@@ -219,96 +389,45 @@ export default function ProfileScreen() {
           </Animated.View>
         )}
 
-        {/* ── Account settings ── */}
-        <SectionLabel label="Account" />
+        {/* ── Features ── */}
+        <SectionLabel label="Features" />
         <SectionCard>
           <SettingsRow
-            icon="person-outline"
-            label="Edit Profile"
-            sublabel="Name, photo, preferences"
+            icon="scan-outline"
+            label="Calorie Scanner"
+            sublabel="Estimate macros from a dish photo"
             iconBg={Colors.surface}
-            onPress={() => {}}
+            onPress={() => router.push('/nutrition' as any)}
             delay={180}
           />
-          <View style={styles.rowDivider} />
+        </SectionCard>
+
+        {/* ── Legal & support (store-required links) ── */}
+        <SectionLabel label="Legal & Support" />
+        <SectionCard>
           <SettingsRow
-            icon="notifications-outline"
-            label="Notifications"
-            sublabel="Reminders, new features"
+            icon="shield-checkmark-outline"
+            label="Privacy Policy"
             iconBg={Colors.surface}
-            onPress={() => {}}
+            onPress={() => openUrl(PRIVACY_URL)}
             delay={220}
           />
           <View style={styles.rowDivider} />
           <SettingsRow
-            icon="lock-closed-outline"
-            label="Privacy & Security"
+            icon="document-text-outline"
+            label="Terms of Service"
             iconBg={Colors.surface}
-            onPress={() => {}}
+            onPress={() => openUrl(TERMS_URL)}
             delay={260}
           />
-        </SectionCard>
-
-        {/* ── App settings ── */}
-        <SectionLabel label="App" />
-        <SectionCard>
+          <View style={styles.rowDivider} />
           <SettingsRow
-            icon="moon-outline"
-            label="Appearance"
-            sublabel="Dark mode (default)"
+            icon="mail-outline"
+            label="Contact Support"
+            sublabel={SUPPORT_EMAIL}
             iconBg={Colors.surface}
-            onPress={() => {}}
+            onPress={handleContactSupport}
             delay={300}
-          />
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="language-outline"
-            label="Units & Language"
-            sublabel="Metric · English"
-            iconBg={Colors.surface}
-            onPress={() => {}}
-            delay={330}
-          />
-        </SectionCard>
-
-        {/* ── Pro features ── */}
-        <SectionLabel label="Features" />
-        <SectionCard>
-          <SettingsRow
-            icon="cart-outline"
-            label="Shopping List"
-            sublabel="Pro feature"
-            iconBg={Colors.surface}
-            onPress={() => router.push('/shopping' as any)}
-            delay={340}
-          />
-        </SectionCard>
-
-        {/* ── Support ── */}
-        <SectionLabel label="Support" />
-        <SectionCard>
-          <SettingsRow
-            icon="help-circle-outline"
-            label="Help & FAQ"
-            iconBg={Colors.surface}
-            onPress={() => {}}
-            delay={360}
-          />
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="chatbubble-outline"
-            label="Send Feedback"
-            iconBg={Colors.surface}
-            onPress={() => {}}
-            delay={390}
-          />
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="star-outline"
-            label="Rate Saveur"
-            iconBg={Colors.surface}
-            onPress={() => {}}
-            delay={410}
           />
         </SectionCard>
 
@@ -324,9 +443,36 @@ export default function ProfileScreen() {
           />
         </SectionCard>
 
+        {/* ── Danger zone ── */}
+        <SectionLabel label="Danger Zone" />
+        <SectionCard>
+          <SettingsRow
+            icon="trash-outline"
+            label="Delete Account"
+            sublabel="Permanently erase your account and data"
+            iconBg={`${Colors.paprika}22`}
+            destructive
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              setConfirmDelete(true);
+            }}
+            delay={470}
+          />
+        </SectionCard>
+
         {/* ── Version ── */}
-        <Text style={styles.version}>Saveur v{APP_VERSION}</Text>
+        <Text style={styles.version}>Rasoi v{APP_VERSION}</Text>
       </ScrollView>
+
+      <ConfirmDialog
+        visible={confirmDelete}
+        title="Delete your account?"
+        message="This permanently erases your recipes, collections, and sign-in — for good. This can’t be undone."
+        confirmLabel="Delete Account"
+        busy={deleting}
+        onConfirm={handleDeleteAccount}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -385,6 +531,10 @@ const styles = StyleSheet.create({
     color: Colors.parchment,
     letterSpacing: 1,
   },
+  avatarImage: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 32,
+  },
   avatarBadge: {
     position: 'absolute',
     bottom: 0,
@@ -410,7 +560,7 @@ const styles = StyleSheet.create({
   identityEmail: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 13,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
   freePlanRow: {
     marginTop: 4,
@@ -424,7 +574,7 @@ const styles = StyleSheet.create({
   freePlanLabel: {
     fontFamily: Fonts.monoRegular,
     fontSize: 10,
-    color: Colors.muted,
+    color: Colors.mutedText,
     letterSpacing: 0.5,
   },
   proPlanRow: {
@@ -464,6 +614,36 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.parchment,
   },
+  usageLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  usageHintMuted: {
+    flex: 1,
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 12,
+    color: Colors.mutedText,
+  },
+  usageCostHint: {
+    fontFamily: Fonts.monoRegular,
+    fontSize: 11,
+    color: Colors.mutedText,
+    letterSpacing: 0.2,
+    marginTop: -2,
+  },
+  usageFootRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: -2,
+  },
+  usageGetMore: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12,
+    color: Colors.saffron,
+  },
   usageCount: {
     fontFamily: Fonts.monoBold,
     fontSize: 13,
@@ -500,7 +680,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontFamily: Fonts.bodyMedium,
     fontSize: 11,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textTransform: 'uppercase',
     letterSpacing: 0.9,
     paddingHorizontal: 4,
@@ -550,14 +730,14 @@ const styles = StyleSheet.create({
   settingsSublabel: {
     fontFamily: Fonts.bodyRegular,
     fontSize: 12,
-    color: Colors.muted,
+    color: Colors.mutedText,
   },
 
   // Version
   version: {
     fontFamily: Fonts.monoRegular,
     fontSize: 11,
-    color: Colors.muted,
+    color: Colors.mutedText,
     textAlign: 'center',
     marginTop: 8,
     letterSpacing: 0.4,

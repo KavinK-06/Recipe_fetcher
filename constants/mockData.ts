@@ -50,7 +50,7 @@ export const RECIPES: Recipe[] = [
     prepTime: '20 min',
     defaultServings: 8,
     tags: ['Dessert', 'Baking', 'Vegetarian'],
-    source: 'instagram.com/reel/abc123',
+    source: 'smittenkitchen.com/recipes',
     ingredients: [
       { id: 'i1', quantity: 200, unit: 'g', name: 'Unsalted butter, softened' },
       { id: 'i2', quantity: 200, unit: 'g', name: 'Caster sugar' },
@@ -82,7 +82,7 @@ export const RECIPES: Recipe[] = [
     prepTime: '15 min',
     defaultServings: 4,
     tags: ['Dinner', 'High Protein'],
-    source: 'instagram.com/reel/def456',
+    source: 'bonappetit.com/recipe',
     ingredients: [
       { id: 'i1', quantity: 400, unit: 'g', name: 'Minced lamb' },
       { id: 'i2', quantity: 1, unit: 'tsp', name: 'Ground cumin' },
@@ -145,7 +145,7 @@ export const RECIPES: Recipe[] = [
     prepTime: '10 min',
     defaultServings: 2,
     tags: ['Dinner', 'High Protein', 'Quick'],
-    source: 'tiktok.com/@chefjamie',
+    source: 'youtube.com/watch?v=chefjamie',
     ingredients: [
       { id: 'i1', quantity: 2, name: 'Salmon fillets (180g each)' },
       { id: 'i2', quantity: 2, unit: 'tbsp', name: 'White miso paste' },
@@ -204,7 +204,7 @@ export const RECIPES: Recipe[] = [
     prepTime: '10 min',
     defaultServings: 4,
     tags: ['Vegan', 'Dinner', 'Side Dish'],
-    source: 'instagram.com/reel/harissa1',
+    source: 'seriouseats.com/recipes',
     ingredients: [
       { id: 'i1', quantity: 1, name: 'Large cauliflower, cut into florets' },
       { id: 'i2', quantity: 3, unit: 'tbsp', name: 'Harissa paste' },
@@ -262,7 +262,7 @@ export const RECIPES: Recipe[] = [
     prepTime: '10 min',
     defaultServings: 6,
     tags: ['Dessert', 'Vegetarian'],
-    source: 'tiktok.com/@dessertlab',
+    source: 'seriouseats.com/desserts',
     ingredients: [
       { id: 'i1', quantity: 600, unit: 'ml', name: 'Double cream' },
       { id: 'i2', quantity: 200, unit: 'ml', name: 'Whole milk' },

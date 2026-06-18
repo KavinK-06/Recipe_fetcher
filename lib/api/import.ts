@@ -31,10 +31,15 @@ export interface RecipeRow {
   updated_at: string;
 }
 
-/** Thrown on HTTP 402 — the free plan's recipe limit is hit. UI should show the paywall. */
+/**
+ * Thrown on HTTP 402 — a usage limit is hit; UI should show the paywall.
+ * `reason` distinguishes which limit: 'recipe_limit' (saved-recipe cap, from
+ * URL/photo imports) vs 'out_of_credits' (shared credit pool, from YouTube
+ * imports) — so the caller can open the right paywall product.
+ */
 export class FreemiumLimitError extends Error {
-  constructor() {
-    super('Free recipe limit reached');
+  constructor(public readonly reason?: string) {
+    super('Free usage limit reached');
     this.name = 'FreemiumLimitError';
   }
 }
@@ -64,6 +69,25 @@ export function isYouTubeUrl(url: string): boolean {
   }
 }
 
+/**
+ * Social-video sources Rasoi does NOT support. Returns the display name so the UI
+ * can show a clear "not supported" message instead of letting the link fall
+ * through to the generic web scraper (which would just fail confusingly). Instagram
+ * import was removed (2026-06-17); TikTok was never built.
+ */
+export function unsupportedSource(url: string): 'Instagram' | 'TikTok' | null {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    if (host === 'instagram.com' || host === 'instagr.am') return 'Instagram';
+    if (host === 'tiktok.com' || host === 'vm.tiktok.com' || host.endsWith('.tiktok.com')) {
+      return 'TikTok';
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function postImport(
   fn: 'import-url' | 'import-youtube',
   url: string,
@@ -87,7 +111,13 @@ async function postImport(
     body: JSON.stringify({ url }),
   });
 
-  if (res.status === 402) throw new FreemiumLimitError();
+  if (res.status === 402) {
+    const reason = await res
+      .json()
+      .then((b) => b?.reason)
+      .catch(() => undefined);
+    throw new FreemiumLimitError(reason);
+  }
 
   if (!res.ok) {
     const code = await res
@@ -104,13 +134,83 @@ export function importFromUrl(url: string, getToken: GetToken): Promise<RecipeRo
   return postImport('import-url', url, getToken);
 }
 
+/**
+ * Imports a recipe from a photo (a `data:image/...;base64,...` data URL) via the
+ * import-photo Edge Function. The function OCRs the image, extracts the recipe,
+ * saves it, and stores the photo as the recipe image. Auth/error handling mirror
+ * postImport. Throws FreemiumLimitError on 402 (free saved-recipe cap).
+ */
+export async function importFromPhoto(image: string, getToken: GetToken): Promise<RecipeRow> {
+  if (!SUPABASE_URL) throw new ImportError(0, 'missing_supabase_url');
+
+  const token = await getToken();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/import-photo`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(SUPABASE_ANON_KEY ? { apikey: SUPABASE_ANON_KEY } : {}),
+      ...(token ? { 'X-Clerk-Token': token } : {}),
+    },
+    body: JSON.stringify({ image }),
+  });
+
+  if (res.status === 402) {
+    const reason = await res
+      .json()
+      .then((b) => b?.reason)
+      .catch(() => undefined);
+    throw new FreemiumLimitError(reason);
+  }
+
+  if (!res.ok) {
+    const code = await res
+      .json()
+      .then((b) => b?.error)
+      .catch(() => undefined);
+    throw new ImportError(res.status, code ?? 'unknown');
+  }
+
+  return (await res.json()) as RecipeRow;
+}
+
 export function importFromYouTube(url: string, getToken: GetToken): Promise<RecipeRow> {
   return postImport('import-youtube', url, getToken);
 }
 
-/** Auto-routes by host: YouTube links → import-youtube, everything else → import-url. */
+/**
+ * Deletes one of the caller's recipes via the delete-recipe Edge Function (service
+ * role: removes the row, decrements the saved-recipe counter, cleans up the stored
+ * image). Auth mirrors postImport. Throws ImportError on non-2xx (404
+ * `recipe_not_found` when the row isn't owned/visible under the caller's auth).
+ */
+export async function deleteRecipe(recipeId: string, getToken: GetToken): Promise<void> {
+  if (!SUPABASE_URL) throw new ImportError(0, 'missing_supabase_url');
+
+  const token = await getToken();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/delete-recipe`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(SUPABASE_ANON_KEY ? { apikey: SUPABASE_ANON_KEY } : {}),
+      ...(token ? { 'X-Clerk-Token': token } : {}),
+    },
+    body: JSON.stringify({ recipeId }),
+  });
+
+  if (!res.ok) {
+    const code = await res
+      .json()
+      .then((b) => b?.error)
+      .catch(() => undefined);
+    throw new ImportError(res.status, code ?? 'unknown');
+  }
+}
+
+/**
+ * Auto-routes by host: YouTube → import-youtube (transcriptapi.com, metered on the
+ * monthly credit allowance); everything else → import-url.
+ */
 export function importRecipe(url: string, getToken: GetToken): Promise<RecipeRow> {
-  return isYouTubeUrl(url)
-    ? importFromYouTube(url, getToken)
-    : importFromUrl(url, getToken);
+  if (isYouTubeUrl(url)) return importFromYouTube(url, getToken);
+  return importFromUrl(url, getToken);
 }

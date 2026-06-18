@@ -21,10 +21,15 @@ export function useProtectedRoute() {
     if (!isLoaded) return;
 
     const firstSegment = segments[0] as string | undefined;
-    const inAuthGroup = firstSegment === '(auth)';
-    const inPublicGroup = firstSegment ? PUBLIC_SEGMENTS.has(firstSegment) : false;
 
-    if (isSignedIn && inAuthGroup) {
+    // The "/" entry gate (app/index.tsx) has no first segment and owns the
+    // initial redirect — stay out of its way so we don't race it elsewhere.
+    if (!firstSegment) return;
+
+    const inPublicGroup = PUBLIC_SEGMENTS.has(firstSegment);
+
+    // A signed-in user has no business on the auth or onboarding screens.
+    if (isSignedIn && inPublicGroup) {
       router.replace('/(tabs)');
       return;
     }

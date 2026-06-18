@@ -17,6 +17,7 @@ export interface CollectionCardProps {
   imageUris: [string?, string?, string?, string?];
   blurhashes?: [string?, string?, string?, string?];
   onPress?: () => void;
+  onLongPress?: () => void;
   style?: ViewStyle;
 }
 
@@ -51,6 +52,7 @@ export default function CollectionCard({
   imageUris,
   blurhashes = [],
   onPress,
+  onLongPress,
   style,
 }: CollectionCardProps) {
   const scale = useSharedValue(1);
@@ -75,6 +77,7 @@ export default function CollectionCard({
   return (
     <AnimatedPressable
       onPress={handlePress}
+      onLongPress={onLongPress}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       style={[animatedStyle, style]}
