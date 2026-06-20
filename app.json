@@ -13,7 +13,7 @@
       "bundleIdentifier": "com.rasoi.app"
     },
     "android": {
-      "package": "com.rasoi.app",
+      "package": "com.rasoi.myapp",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#1A0A0E"
@@ -48,7 +48,12 @@
     "extra": {
       "clerkPublishableKey": "$(EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY)",
       "supabaseUrl": "$(EXPO_PUBLIC_SUPABASE_URL)",
-      "supabaseAnonKey": "$(EXPO_PUBLIC_SUPABASE_ANON_KEY)"
-    }
+      "supabaseAnonKey": "$(EXPO_PUBLIC_SUPABASE_ANON_KEY)",
+      "router": {},
+      "eas": {
+        "projectId": "f19594c6-2de6-4f2c-b749-1ae009601c13"
+      }
+    },
+    "owner": "kavin_06"
   }
 }

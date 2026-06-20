@@ -33,10 +33,11 @@ import { deleteAccount, AccountError } from '../../lib/api/account';
 const APP_VERSION = '1.0.0';
 
 // Store-compliance links. Both Play and the App Store require a reachable
-// Privacy Policy + Terms (EULA) and a support contact. Swap these placeholder
-// URLs for the real hosted pages before submitting for review.
-const PRIVACY_URL = 'https://rasoi.app/privacy';
-const TERMS_URL = 'https://rasoi.app/terms';
+// Privacy Policy + Terms (EULA) and a support contact. Hosted on GitHub Pages
+// (source in /docs); the same privacy URL goes in the Play Data Safety form +
+// App Store Connect privacy field.
+const PRIVACY_URL = 'https://kavink-06.github.io/Recipe_fetcher/privacy.html';
+const TERMS_URL = 'https://kavink-06.github.io/Recipe_fetcher/terms.html';
 const SUPPORT_EMAIL = 'kavinninja2006@gmail.com';
 
 // ── Avatar ─────────────────────────────────────────────────────────────────────

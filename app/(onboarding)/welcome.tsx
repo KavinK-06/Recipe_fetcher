@@ -101,34 +101,6 @@ function Slide2Illustration() {
   );
 }
 
-function Slide3Illustration() {
-  return (
-    <View style={il.container}>
-      <View style={il.stepCard}>
-        {/* Step header */}
-        <View style={il.stepHeader}>
-          <View style={il.stepBadge}>
-            <Text style={il.stepBadgeText}>2</Text>
-          </View>
-          <Text style={il.stepMeta}>Step 2 of 6</Text>
-          <View style={il.stepDot} />
-        </View>
-        {/* Step instruction */}
-        <Text style={il.stepInstruction}>
-          Heat olive oil in a large pan over medium-high heat until shimmering.
-        </Text>
-        {/* Timer ring mockup */}
-        <View style={il.timerRow}>
-          <View style={il.timerRing}>
-            <Text style={il.timerText}>05:00</Text>
-            <Text style={il.timerSub}>tap to start</Text>
-          </View>
-        </View>
-      </View>
-    </View>
-  );
-}
-
 const SLIDES: SlideData[] = [
   {
     key: 'import',
@@ -141,12 +113,6 @@ const SLIDES: SlideData[] = [
     headline: 'Every recipe,\nbeautifully organised',
     sub: 'Auto-tagged collections, smart search, and a library that grows with you.',
     illustration: <Slide2Illustration />,
-  },
-  {
-    key: 'cook',
-    headline: 'Cook smarter',
-    sub: 'Step-by-step mode with built-in timers, ingredient scaling, and screen-always-on.',
-    illustration: <Slide3Illustration />,
   },
 ];
 
@@ -291,7 +257,7 @@ export default function OnboardingScreen() {
         {/* CTAs */}
         {isLast ? (
           <View style={styles.ctaGroup}>
-            {/* Start Free Trial */}
+            {/* Get Started */}
             <Animated.View style={nextAnimStyle}>
               <Pressable
                 style={styles.primaryButton}
@@ -303,7 +269,7 @@ export default function OnboardingScreen() {
                   nextScale.value = withSpring(1, { damping: 14, stiffness: 300 });
                 }}
               >
-                <Text style={styles.primaryButtonText}>Start Free Trial</Text>
+                <Text style={styles.primaryButtonText}>Get Started</Text>
               </Pressable>
             </Animated.View>
             {/* Sign In ghost */}
@@ -457,79 +423,6 @@ const il = StyleSheet.create({
     fontFamily: Fonts.monoMedium,
     fontSize: 9,
     color: Colors.noir,
-  },
-  // Slide 3
-  stepCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: Colors.burgundy,
-    padding: 20,
-    width: '100%',
-    gap: 14,
-  },
-  stepHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  stepBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: Colors.burgundy,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepBadgeText: {
-    fontFamily: Fonts.monoBold,
-    fontSize: 13,
-    color: Colors.parchment,
-  },
-  stepMeta: {
-    flex: 1,
-    fontFamily: Fonts.bodyMedium,
-    fontSize: 11,
-    color: Colors.mutedText,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  stepDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: Colors.paprika,
-  },
-  stepInstruction: {
-    fontFamily: Fonts.bodyRegular,
-    fontSize: 14,
-    lineHeight: 21,
-    color: Colors.parchment,
-  },
-  timerRow: {
-    alignItems: 'center',
-  },
-  timerRing: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 4,
-    borderColor: Colors.saffron,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.noir,
-  },
-  timerText: {
-    fontFamily: Fonts.monoBold,
-    fontSize: 16,
-    color: Colors.parchment,
-    letterSpacing: 1,
-  },
-  timerSub: {
-    fontFamily: Fonts.bodyRegular,
-    fontSize: 8,
-    color: Colors.mutedText,
-    marginTop: 1,
   },
 });
 

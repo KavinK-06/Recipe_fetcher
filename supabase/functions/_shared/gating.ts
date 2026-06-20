@@ -2,14 +2,14 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { HttpError } from './http.ts';
 
 // ── Pricing-model limits ─────────────────────────────────────────────────────
-// Free: 15 saved recipes, unlimited URL imports, 3 monthly credits.
+// Free: 15 saved recipes, unlimited URL imports, 5 monthly credits.
 // Lifetime: unlimited saved recipes, 20 monthly credits.
 // One shared "credit" pool covers every metered action: a captioned YouTube
 // import (1) and a calorie scan (1). Spend draws the monthly allowance first,
 // then purchased `youtube_credits`. (The 15-recipe cap gates URL/photo imports
 // only — the credit pool is independent of it.)
 const FREE_RECIPE_LIMIT = 15;
-const YT_ALLOWANCE_FREE = 3;
+const YT_ALLOWANCE_FREE = 5;
 const YT_ALLOWANCE_LIFETIME = 20;
 
 export interface Entitlement {
@@ -133,7 +133,7 @@ function allowanceLeft(ent: Entitlement): number {
  * Gates a metered action against the shared monthly credit pool (YouTube imports
  * and calorie scans both draw from it): first rolls over the monthly counter if
  * we're in a new month, then allows the action only if there are enough credits
- * left to cover `cost` — drawn from the monthly allowance (3 free / 20 lifetime)
+ * left to cover `cost` — drawn from the monthly allowance (5 free / 20 lifetime)
  * first, then purchased `youtube_credits`. Nothing is consumed here — call
  * `consumeCredits` only after the action succeeds, so a failure never burns a
  * paid credit.

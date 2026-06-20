@@ -18,7 +18,7 @@ export interface ImportSourceButtonProps {
   iconName: string;
   iconLib?: IconLib;
   iconColor?: string;
-  // Optional usage pill shown on the right (e.g. "3 credits" for monthly limits).
+  // Optional usage pill shown on the right (e.g. "5 credits" for monthly limits).
   badge?: string;
   badgeMuted?: boolean;
   onPress?: () => void;

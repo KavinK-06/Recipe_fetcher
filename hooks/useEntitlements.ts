@@ -5,7 +5,7 @@ import { usePaywall } from '../components/PaywallProvider';
 
 // Keep these in sync with supabase/functions/_shared/gating.ts.
 const FREE_RECIPE_LIMIT = 15;
-const YT_ALLOWANCE_FREE = 3;
+const YT_ALLOWANCE_FREE = 5;
 const YT_ALLOWANCE_LIFETIME = 20;
 
 interface EntitlementRow {
