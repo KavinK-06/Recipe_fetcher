@@ -66,6 +66,9 @@ the Production instance.
   **Verified:** creating a real user populates the `users` table. (Clerk's empty "John Doe"
   *test* event returns 422 by design — that's expected, not a failure.)
 - [x] **Publishable key** `pk_live_...` → set as the EAS env var `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (Phase 3).
+- [x] **Supabase Third-Party Auth** updated to the production Clerk domain (`clerk.boardedge.in`)
+  so direct RLS reads verify. **Verified:** app runs end-to-end in Expo Go against production
+  (sign-in, recipe + collection reads, imports all working).
 
 ## Phase 3 — App config + EAS environment
 - [x] `app.json`: package `com.rasoi.myapp`, no `RECORD_AUDIO`, versionCode managed by EAS.
