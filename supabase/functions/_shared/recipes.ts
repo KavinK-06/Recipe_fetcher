@@ -36,15 +36,22 @@ function sanitizeIngredients(
 }
 
 /**
- * Normalises steps: drops blank instructions and renumbers `order` sequentially
- * (1..n) so a model that skips/duplicates indexes still yields a clean list.
+ * Normalises steps: drops blank instructions, keeps the short glanceable `title`
+ * (empty string when the model omits it — the UI just hides the label), and
+ * renumbers `order` sequentially (1..n) so a model that skips/duplicates indexes
+ * still yields a clean list.
  */
-function sanitizeSteps(steps: RecipeJSON['steps']): { order: number; instruction: string }[] {
+function sanitizeSteps(
+  steps: RecipeJSON['steps'],
+): { order: number; title: string; instruction: string }[] {
   if (!Array.isArray(steps)) return [];
   return steps
-    .map((s) => (typeof s?.instruction === 'string' ? s.instruction.trim() : ''))
-    .filter((instruction) => instruction.length > 0)
-    .map((instruction, i) => ({ order: i + 1, instruction }));
+    .map((s) => ({
+      instruction: typeof s?.instruction === 'string' ? s.instruction.trim() : '',
+      title: typeof s?.title === 'string' ? s.title.trim() : '',
+    }))
+    .filter((s) => s.instruction.length > 0)
+    .map((s, i) => ({ order: i + 1, title: s.title, instruction: s.instruction }));
 }
 
 interface InsertRecipeParams {

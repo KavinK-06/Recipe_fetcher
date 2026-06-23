@@ -16,6 +16,7 @@ import {
   DMSans_400Regular,
   DMSans_500Medium,
   DMSans_700Bold,
+  DMSans_900Black,
 } from '@expo-google-fonts/dm-sans';
 import {
   JetBrainsMono_400Regular,
@@ -109,6 +110,7 @@ export default function RootLayout() {
     DMSans_400Regular,
     DMSans_500Medium,
     DMSans_700Bold,
+    DMSans_900Black,
     JetBrainsMono_400Regular,
     JetBrainsMono_500Medium,
     JetBrainsMono_700Bold,

@@ -284,6 +284,38 @@ Triggers: `set_updated_at()` on users/recipes/collections/entitlements/payments;
 
 ---
 
+## Builds & releases (EAS Build + OTA updates)
+
+Managed Expo (**CNG** — no `android/`/`ios/` dirs; native is generated at build time). Cannot run in Expo Go (native modules: `expo-iap`, `expo-share-intent`, `expo-updates`). Profiles in `eas.json`:
+
+| Profile | Distribution | Artifact | Channel | Use |
+|---|---|---|---|---|
+| `development` | internal | APK (dev client) | `development` | Local dev — loads JS from Metro (`npx expo start`). Fastest loop. |
+| `preview` | internal | APK | `preview` | Standalone test build for the team. |
+| `production` | store | AAB (`autoIncrement`) | `production` | Play Store. `appVersionSource: remote` → EAS owns `versionCode`. |
+
+```bash
+eas build --profile preview --platform android       # test APK
+eas build --profile production --platform android     # Play AAB
+```
+
+**OTA updates (`expo-updates`, set up 2026-06).** `app.json` carries `updates.url` (EAS) + `runtimeVersion: { policy: "fingerprint" }`; each build profile has a matching `channel`. Ships JS/asset changes to installed builds **without a native rebuild or store review**:
+
+```bash
+eas update --branch preview --message "..."           # JS update → preview builds
+eas update --branch production --message "hotfix ..."  # → production users
+```
+
+**The native-vs-JS line — what needs a rebuild:**
+- **JS / assets / styles / copy / fonts loaded via `useFonts`** → `eas update`, instant, no rebuild.
+- **Native changes** (a new module, a config-plugin tweak like `expo-share-intent`, an SDK bump) → the **fingerprint changes**, so EAS won't deliver that OTA to old builds and a **new `eas build` is required**. This is the guardrail: it stops a JS update crashing on a mismatched binary.
+- A build must ship **with `expo-updates` baked in** before it can receive any OTA — the first `eas build` per channel after this setup is mandatory.
+- Edge-function (Deno) changes are **separate** — `supabase functions deploy <name>`, never part of an app build or OTA.
+
+> Caveat: `expo-share-intent@7.0.0` targets Expo SDK ^56 but the app is on SDK 54 (build warns, iOS module disabled — iOS is `disableIOS: true` anyway). It has worked on Android in a preview build; pin to the `6.x` line for the officially-supported SDK-54 version if a future build misbehaves.
+
+---
+
 ## Backend build status (track against `backend-roadmap.md`)
 
 | Phase | Step | Feature | Status |

@@ -17,7 +17,7 @@ export interface RecipeRow {
   title: string;
   description: string | null;
   ingredients: { name: string; quantity: string; unit?: string }[];
-  steps: { order: number; instruction: string }[];
+  steps: { order: number; instruction: string; title?: string }[];
   cook_time_minutes: number | null;
   prep_time_minutes: number | null;
   servings: number | null;

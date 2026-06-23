@@ -111,6 +111,7 @@ export default function CollectionDetailScreen() {
 
   const [pickerVisible, setPickerVisible] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [recipeMenu, setRecipeMenu] = useState<RecipeRow | null>(null);
   const [recipeToRemove, setRecipeToRemove] = useState<RecipeRow | null>(null);
   const [confirmDeleteCollection, setConfirmDeleteCollection] = useState(false);
 
@@ -126,10 +127,20 @@ export default function CollectionDetailScreen() {
     }
   };
 
-  const confirmRemove = (recipe: RecipeRow) => {
-    if (!id) return;
+  const openRecipeMenu = (recipe: RecipeRow) => {
+    Haptics.selectionAsync();
+    setRecipeMenu(recipe);
+  };
+
+  const handleRemoveFromMenu = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setRecipeToRemove(recipe);
+    const r = recipeMenu;
+    setRecipeMenu(null);
+    // Let the menu slide out before the confirm dialog presents — two native
+    // Modals on screen at once misbehaves on iOS (same pattern as the header menu).
+    setTimeout(() => {
+      if (r) setRecipeToRemove(r);
+    }, 260);
   };
 
   const handleRemoveConfirmed = () => {
@@ -171,12 +182,11 @@ export default function CollectionDetailScreen() {
         title={item.title}
         imageUri={item.image_url ?? ''}
         cookTime={cookTimeLabel(item.cook_time_minutes)}
-        isSaved
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           router.push(`/recipe/${item.id}` as any);
         }}
-        onSavePress={() => confirmRemove(item)}
+        onMenuPress={() => openRecipeMenu(item)}
       />
     </Animated.View>
   );
@@ -278,6 +288,41 @@ export default function CollectionDetailScreen() {
             <Ionicons name="trash-outline" size={19} color={Colors.paprika} />
           </View>
           <Text style={[styles.menuLabel, styles.menuLabelDanger]}>Delete collection</Text>
+        </Pressable>
+      </BottomSheet>
+
+      {/* Per-recipe menu (3-dot on each card) */}
+      <BottomSheet
+        visible={recipeMenu !== null}
+        onClose={() => setRecipeMenu(null)}
+        sheetStyle={styles.menuSheet}
+      >
+        <Text style={styles.menuTitle} numberOfLines={1}>
+          {recipeMenu?.title ?? 'Recipe'}
+        </Text>
+
+        <Pressable
+          style={styles.menuRow}
+          onPress={() => {
+            Haptics.selectionAsync();
+            const r = recipeMenu;
+            setRecipeMenu(null);
+            if (r) router.push(`/recipe/${r.id}` as any);
+          }}
+        >
+          <View style={styles.menuIcon}>
+            <Ionicons name="open-outline" size={20} color={Colors.saffron} />
+          </View>
+          <Text style={styles.menuLabel}>Open recipe</Text>
+        </Pressable>
+
+        <Pressable style={styles.menuRow} onPress={handleRemoveFromMenu}>
+          <View style={[styles.menuIcon, styles.menuIconDanger]}>
+            <Ionicons name="trash-outline" size={19} color={Colors.paprika} />
+          </View>
+          <Text style={[styles.menuLabel, styles.menuLabelDanger]}>
+            Remove from collection
+          </Text>
         </Pressable>
       </BottomSheet>
 

@@ -142,12 +142,23 @@ const USER_PROMPT =
   'Extract the recipe from this photo. Return ONLY this JSON shape:\n' +
   '{ "title": string, "description": string, ' +
   '"ingredients": [{ "name": string, "quantity": string, "unit": string }], ' +
-  '"steps": [{ "order": number, "instruction": string }], ' +
+  '"steps": [{ "order": number, "title": string, "instruction": string }], ' +
   '"cookTime": number|null, "prepTime": number|null, "servings": number|null, ' +
   '"tags": string[], "imageUrl": null }\n' +
   'cookTime/prepTime are integer minutes or null. servings is an integer or ' +
   'null. tags are 3-6 lowercase one-word labels. Transcribe quantities exactly ' +
-  'as written. If the photo has no readable recipe, return {"title":"", ' +
+  'as written. STEP STRUCTURE: organise the method into clear titled steps — aim ' +
+  'for 6 to 10 as a GROUPING guideline for how many cards to show, NOT a content ' +
+  'limit. Bundle closely-related actions into one step, and group all prep ' +
+  '(chopping, measuring) into one step titled "Prep" at the start. A simple recipe ' +
+  'may have fewer (do not pad); a complex dish may need around 12 or a few more. ' +
+  'NEVER drop, shorten or summarise away any detail to hit a step count — every ' +
+  'ingredient, quantity, temperature, time and technique shown MUST appear in the ' +
+  'steps; a step\'s "instruction" may be several sentences, and the step count ' +
+  'always yields to keeping all the detail. Give every step a "title" of one to ' +
+  'three words naming the stage (e.g. "Temper the spices", "Rest the dough") — ' +
+  'NOT the full sentence, which goes in "instruction". ' +
+  'If the photo has no readable recipe, return {"title":"", ' +
   '"ingredients":[], "steps":[]}.';
 
 function isBase64Image(value: string): boolean {
@@ -185,6 +196,7 @@ function parseRecipe(raw: string): RecipeJSON | null {
         const s = (st ?? {}) as Record<string, unknown>;
         return {
           order: intOrNull(s.order) ?? idx + 1,
+          title: str(s.title) ?? '',
           instruction: (str(s.instruction) ?? '').trim(),
         };
       })

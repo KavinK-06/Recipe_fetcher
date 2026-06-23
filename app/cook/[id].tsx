@@ -538,7 +538,14 @@ export default function CookModeScreen() {
             <Text style={styles.stepMeta}>Step {stepIndex + 1}</Text>
           </View>
 
-          <Text style={styles.instruction}>{currentStep.text}</Text>
+          {/* Bold glanceable title + full instruction, grouped tightly so the
+              title reads as the label for the sentence below it. */}
+          <View style={styles.stepTextBlock}>
+            {currentStep.title ? (
+              <Text style={styles.stepTitle}>{currentStep.title}</Text>
+            ) : null}
+            <Text style={styles.instruction}>{currentStep.text}</Text>
+          </View>
 
           {/* Ingredient callout (mock recipes only carry per-step ingredients) */}
           {currentStep.ingredients.length > 0 && (
@@ -748,6 +755,16 @@ const styles = StyleSheet.create({
     color: Colors.mutedText,
     textTransform: 'uppercase',
     letterSpacing: 1,
+  },
+  stepTextBlock: {
+    gap: 18,
+  },
+  stepTitle: {
+    fontFamily: Fonts.bodyBlack,
+    fontSize: 29,
+    lineHeight: 34,
+    color: Colors.parchment,
+    letterSpacing: 0.2,
   },
   instruction: {
     fontFamily: Fonts.bodyRegular,

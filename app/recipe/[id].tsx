@@ -582,6 +582,7 @@ export default function RecipeDetailScreen() {
                   <StepCard
                     stepNumber={i + 1}
                     totalSteps={RECIPE.steps.length}
+                    title={step.title}
                     instruction={step.text}
                     timerSeconds={step.timerSeconds}
                     isActive={i === activeStep}

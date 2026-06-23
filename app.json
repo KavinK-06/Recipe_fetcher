@@ -7,6 +7,12 @@
     "scheme": "rasoi",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f19594c6-2de6-4f2c-b749-1ae009601c13"
+    },
     "icon": "./assets/images/icon.png",
     "ios": {
       "supportsTablet": false,

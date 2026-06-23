@@ -19,6 +19,9 @@ export interface UiIngredient {
 export interface UiStep {
   id: string;
   text: string;
+  /** Bold 1–3 word glanceable label shown above the instruction (DB imports;
+   *  absent on older recipes and mock data). */
+  title?: string;
   timerSeconds?: number;
   /** Step-scoped ingredient pills (mock only; empty for DB recipes). */
   ingredients: string[];
@@ -150,6 +153,7 @@ export function rowToUiRecipe(row: RecipeRow): UiRecipe {
       .sort((a, b) => (a?.order ?? 0) - (b?.order ?? 0))
       .map((s, idx) => ({
         id: `s${idx}`,
+        title: cleanText(s?.title) || undefined,
         text: s?.instruction ?? '',
         timerSeconds: undefined, // DB steps carry no timer
         ingredients: [], // DB steps carry no per-step ingredient list

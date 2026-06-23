@@ -7,6 +7,7 @@ export const Fonts = {
   bodyRegular: 'DMSans_400Regular',
   bodyMedium: 'DMSans_500Medium',
   bodyBold: 'DMSans_700Bold',
+  bodyBlack: 'DMSans_900Black',
 
   monoRegular: 'JetBrainsMono_400Regular',
   monoMedium: 'JetBrainsMono_500Medium',

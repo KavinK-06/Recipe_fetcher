@@ -13,6 +13,7 @@ import TimerWidget from './TimerWidget';
 export interface StepCardProps {
   stepNumber: number;
   totalSteps: number;
+  title?: string;
   instruction: string;
   timerSeconds?: number;
   isActive?: boolean;
@@ -22,6 +23,7 @@ export interface StepCardProps {
 export default function StepCard({
   stepNumber,
   totalSteps,
+  title,
   instruction,
   timerSeconds,
   isActive = false,
@@ -79,6 +81,9 @@ export default function StepCard({
         </Text>
         {isActive && <View style={styles.activeDot} />}
       </View>
+
+      {/* Glanceable step title */}
+      {title ? <Text style={styles.stepTitle}>{title}</Text> : null}
 
       {/* Instruction */}
       <Text style={styles.instruction}>{instruction}</Text>
@@ -141,6 +146,14 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: Colors.paprika,
+  },
+  stepTitle: {
+    fontFamily: Fonts.bodyBlack,
+    fontSize: 21,
+    lineHeight: 26,
+    color: Colors.parchment,
+    letterSpacing: 0.2,
+    marginBottom: 14,
   },
   instruction: {
     fontFamily: Fonts.bodyRegular,
