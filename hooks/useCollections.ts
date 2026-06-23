@@ -36,6 +36,10 @@ export interface CollectionWithMeta {
 
 const COLLECTIONS_KEY = 'collections';
 
+/** Shape cached under ['collection', id] (see useCollection) — used by the
+ *  optimistic add/remove mutations to update the open collection on tap. */
+type CollectionDetail = { name: string; recipes: RecipeRow[] };
+
 export function useCollections() {
   const { userId } = useAuth();
   const supabase = useSupabaseClient();
@@ -173,10 +177,16 @@ export function useDeleteCollection() {
 }
 
 export function useAddRecipeToCollection() {
+  const { userId } = useAuth();
   const supabase = useSupabaseClient();
   const qc = useQueryClient();
 
-  return useMutation<void, Error, { collectionId: string; recipeId: string }>({
+  return useMutation<
+    void,
+    Error,
+    { collectionId: string; recipeId: string },
+    { prev?: CollectionDetail | null; collectionId: string }
+  >({
     mutationFn: async ({ collectionId, recipeId }) => {
       const { error } = await supabase
         .from('collection_recipes')
@@ -186,7 +196,29 @@ export function useAddRecipeToCollection() {
         );
       if (error) throw new Error(error.message);
     },
-    onSuccess: (_d, { collectionId }) => {
+    // Optimistically drop the recipe into the open collection so the picker check
+    // and the grid update on tap — not after two sequential network round-trips
+    // (upsert + refetch), which is what made adding feel stuck for 2–3s. The
+    // recipe row is pulled from the warm ['recipes'] cache.
+    onMutate: async ({ collectionId, recipeId }) => {
+      await qc.cancelQueries({ queryKey: ['collection', collectionId] });
+      const prev = qc.getQueryData<CollectionDetail | null>(['collection', collectionId]);
+      const recipe = qc
+        .getQueryData<RecipeRow[]>(['recipes', userId])
+        ?.find((r) => r.id === recipeId);
+      qc.setQueryData<CollectionDetail | null>(['collection', collectionId], (old) => {
+        if (!old || !recipe || old.recipes.some((r) => r.id === recipeId)) return old;
+        // The query sorts newest-added first, so a fresh add goes to the front.
+        return { ...old, recipes: [recipe, ...old.recipes] };
+      });
+      return { prev, collectionId };
+    },
+    onError: (_e, _vars, ctx) => {
+      if (ctx) qc.setQueryData(['collection', ctx.collectionId], ctx.prev);
+    },
+    // Reconcile with the server in the background once the write settles; the
+    // optimistic data already matches, so there's no visible flicker.
+    onSettled: (_d, _e, { collectionId }) => {
       qc.invalidateQueries({ queryKey: [COLLECTIONS_KEY] });
       qc.invalidateQueries({ queryKey: ['collection', collectionId] });
     },
@@ -197,7 +229,12 @@ export function useRemoveRecipeFromCollection() {
   const supabase = useSupabaseClient();
   const qc = useQueryClient();
 
-  return useMutation<void, Error, { collectionId: string; recipeId: string }>({
+  return useMutation<
+    void,
+    Error,
+    { collectionId: string; recipeId: string },
+    { prev?: CollectionDetail | null; collectionId: string }
+  >({
     mutationFn: async ({ collectionId, recipeId }) => {
       const { data, error } = await supabase
         .from('collection_recipes')
@@ -210,7 +247,20 @@ export function useRemoveRecipeFromCollection() {
         throw new Error('The recipe was not removed (0 rows) — check the Clerk ↔ Supabase auth bridge.');
       }
     },
-    onSuccess: (_d, { collectionId }) => {
+    // Drop the card from the open collection immediately; roll back if the delete
+    // fails (e.g. RLS removed 0 rows).
+    onMutate: async ({ collectionId, recipeId }) => {
+      await qc.cancelQueries({ queryKey: ['collection', collectionId] });
+      const prev = qc.getQueryData<CollectionDetail | null>(['collection', collectionId]);
+      qc.setQueryData<CollectionDetail | null>(['collection', collectionId], (old) =>
+        old ? { ...old, recipes: old.recipes.filter((r) => r.id !== recipeId) } : old,
+      );
+      return { prev, collectionId };
+    },
+    onError: (_e, _vars, ctx) => {
+      if (ctx) qc.setQueryData(['collection', ctx.collectionId], ctx.prev);
+    },
+    onSettled: (_d, _e, { collectionId }) => {
       qc.invalidateQueries({ queryKey: [COLLECTIONS_KEY] });
       qc.invalidateQueries({ queryKey: ['collection', collectionId] });
     },

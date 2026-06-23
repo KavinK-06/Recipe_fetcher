@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, ViewStyle } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  withSpring,
+  withSequence,
   Easing,
 } from 'react-native-reanimated';
 import { Colors } from '../constants/colors';
@@ -44,19 +45,25 @@ export default function IngredientRow({
     opacity: textOpacity.value,
   }));
 
-  const handlePress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    const next = !isChecked;
-    checkScale.value = withSpring(0.7, { damping: 10, stiffness: 400 }, () => {
-      checkScale.value = withSpring(1, { damping: 12, stiffness: 300 });
-    });
-    strikeWidth.value = withTiming(next ? 1 : 0, {
+  // Strike-through + dim follow the checked state (owned by the parent), so the
+  // row stays in sync whether it's toggled here or reset from outside.
+  useEffect(() => {
+    strikeWidth.value = withTiming(isChecked ? 1 : 0, {
       duration: 280,
       easing: Easing.out(Easing.quad),
     });
-    textOpacity.value = withTiming(next ? 0.4 : 1, { duration: 200 });
+    textOpacity.value = withTiming(isChecked ? 0.4 : 1, { duration: 200 });
+  }, [isChecked, strikeWidth, textOpacity]);
 
+  const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // A contained press dip that settles back to exactly 1. withTiming can't
+    // overshoot its target, so — unlike an underdamped spring — the box never
+    // ends up larger and never wobbles/oscillates after the tap.
+    checkScale.value = withSequence(
+      withTiming(0.9, { duration: 80, easing: Easing.out(Easing.quad) }),
+      withTiming(1, { duration: 150, easing: Easing.out(Easing.cubic) }),
+    );
     onToggle?.();
   };
 
@@ -71,10 +78,7 @@ export default function IngredientRow({
         ]}
       >
         {isChecked && (
-          <View style={styles.checkmark}>
-            <View style={styles.checkmarkShort} />
-            <View style={styles.checkmarkLong} />
-          </View>
+          <Ionicons name="checkmark" size={14} color={Colors.parchment} />
         )}
       </Animated.View>
 
@@ -117,32 +121,6 @@ const styles = StyleSheet.create({
   checkboxChecked: {
     backgroundColor: Colors.burgundy,
     borderColor: Colors.burgundy,
-  },
-  checkmark: {
-    width: 12,
-    height: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkmarkShort: {
-    position: 'absolute',
-    left: 0,
-    bottom: 3,
-    width: 4,
-    height: 1.5,
-    backgroundColor: Colors.parchment,
-    borderRadius: 1,
-    transform: [{ rotate: '45deg' }],
-  },
-  checkmarkLong: {
-    position: 'absolute',
-    right: 0,
-    bottom: 1,
-    width: 7,
-    height: 1.5,
-    backgroundColor: Colors.parchment,
-    borderRadius: 1,
-    transform: [{ rotate: '-50deg' }],
   },
   textBlock: {
     flex: 1,
