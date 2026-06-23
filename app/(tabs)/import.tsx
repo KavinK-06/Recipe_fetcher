@@ -11,7 +11,7 @@ import {
   Clipboard,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -747,6 +747,84 @@ function SourceHintSheet({
   );
 }
 
+// ── "Scan a photo" sheet ───────────────────────────────────────────────────────
+// Branded replacement for the plain OS action-sheet that used to ask
+// camera-vs-library. Mirrors SourceHintSheet's look so the photo source matches
+// the rest of the app: scrim, drag handle, saffron icon, and two themed actions.
+function ScanPhotoSheet({
+  visible,
+  onClose,
+  onCamera,
+  onLibrary,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onCamera: () => void;
+  onLibrary: () => void;
+}) {
+  const translateY = useSharedValue(SCREEN_HEIGHT);
+  const overlayOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (visible) {
+      overlayOpacity.value = withTiming(1, { duration: 200 });
+      translateY.value = withSpring(0, { damping: 20, stiffness: 200, mass: 0.8 });
+    } else {
+      overlayOpacity.value = withTiming(0, { duration: 160 });
+      translateY.value = withTiming(SCREEN_HEIGHT, {
+        duration: 220,
+        easing: Easing.in(Easing.cubic),
+      });
+    }
+  }, [visible, translateY, overlayOpacity]);
+
+  const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
+  const overlayStyle = useAnimatedStyle(() => ({ opacity: overlayOpacity.value }));
+
+  if (!visible) return null;
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      <Animated.View
+        style={[StyleSheet.absoluteFill, styles.sheetScrim, overlayStyle]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+
+      <Animated.View style={[styles.hintSheet, sheetStyle]}>
+        <GestureDetector gesture={buildSheetDismissGesture(translateY, onClose)}>
+          <View style={styles.sheetHandleZone}>
+            <View style={styles.sheetHandle} />
+          </View>
+        </GestureDetector>
+
+        <View style={[styles.hintIconCircle, { backgroundColor: `${Colors.saffron}22` }]}>
+          <Ionicons name="camera-outline" size={26} color={Colors.saffron} />
+        </View>
+
+        <Text style={styles.hintTitle}>Scan a recipe</Text>
+        <Text style={styles.hintBody}>
+          Take a photo of a recipe or choose one from your library — we’ll read the
+          page and build the recipe for you.
+        </Text>
+
+        <Pressable style={styles.hintPasteButton} onPress={onCamera}>
+          <Ionicons name="camera" size={16} color={Colors.parchment} />
+          <Text style={styles.hintPasteText}>Take Photo</Text>
+        </Pressable>
+        <Pressable style={styles.scanSecondary} onPress={onLibrary}>
+          <Ionicons name="images-outline" size={16} color={Colors.parchment} />
+          <Text style={styles.scanSecondaryText}>Choose from Library</Text>
+        </Pressable>
+        <Pressable style={styles.hintDismiss} onPress={onClose} hitSlop={6}>
+          <Text style={styles.hintDismissText}>Cancel</Text>
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
+}
+
 // ── Free-plan recipe-limit banner ───────────────────────────────────────────────
 // Shows in the last stretch before the cap and once it's hit. At the cap it's a
 // tappable lock → the recipe_limit paywall; just below it, a soft heads-up. Only
@@ -801,9 +879,15 @@ export default function ImportScreen() {
   const [state, setState] = useState<ImportState>('idle');
   const [loadingKind, setLoadingKind] = useState<LoadingKind>('website');
   const [sourceSheet, setSourceSheet] = useState<SourceKey | null>(null);
+  const [scanSheet, setScanSheet] = useState(false);
   const [imported, setImported] = useState<RecipeRow | null>(null);
   const [collectionPicker, setCollectionPicker] = useState(false);
   const cancelledRef = useRef(false);
+  // A link shared into the app (Android share sheet → Rasoi) arrives as a route
+  // param; `handledShareRef` keys it by url+timestamp so a re-render doesn't
+  // re-import, while re-sharing the same link (new timestamp) does.
+  const params = useLocalSearchParams<{ sharedUrl?: string; sharedAt?: string }>();
+  const handledShareRef = useRef<string | null>(null);
 
   const { mutateAsync } = useImportRecipe();
   const { mutateAsync: scanPhoto } = useImportPhoto();
@@ -816,7 +900,7 @@ export default function ImportScreen() {
     recipeCount,
     recipeLimit,
   } = useEntitlements();
-  // YouTube imports draw from the monthly "import credits" pool — 1 credit each
+  // YouTube imports draw from the shared "import credits" pool — 1 credit each
   // (transcriptapi.com). The badge shows the remaining balance; the sublabel makes
   // the price explicit.
   const outOfVideo = !entLoading && youtubeRemaining === 0;
@@ -868,6 +952,21 @@ export default function ImportScreen() {
       }
     }
   };
+
+  // Auto-import a link shared into the app: prefill the URL field and run the
+  // same fetch the paste flow uses (which routes YouTube vs. web and applies the
+  // credit gate / paywall). Guarded so it fires once per distinct share.
+  useEffect(() => {
+    const shared = typeof params.sharedUrl === 'string' ? params.sharedUrl : undefined;
+    if (!shared) return;
+    const key = `${shared}|${params.sharedAt ?? ''}`;
+    if (handledShareRef.current === key) return;
+    handledShareRef.current = key;
+    setUrl(shared);
+    startFetch(shared);
+    // startFetch is stable for this purpose; keying off the share params is enough.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.sharedUrl, params.sharedAt]);
 
   const handlePaste = async () => {
     Haptics.selectionAsync();
@@ -961,11 +1060,21 @@ export default function ImportScreen() {
 
   const handleScanPhoto = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert('Scan a recipe', 'Take a photo of a recipe or choose one from your library.', [
-      { text: 'Take Photo', onPress: scanFromCamera },
-      { text: 'Choose from Library', onPress: scanFromLibrary },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    setScanSheet(true);
+  };
+
+  // Sheet actions — close the branded sheet first, then launch the OS
+  // camera/library picker so the two native modals don't fight for the screen.
+  const handleScanCamera = () => {
+    Haptics.selectionAsync();
+    setScanSheet(false);
+    scanFromCamera();
+  };
+
+  const handleScanLibrary = () => {
+    Haptics.selectionAsync();
+    setScanSheet(false);
+    scanFromLibrary();
   };
 
   // A 402 means a usage cap was hit — open the paywall matched to which one:
@@ -980,7 +1089,7 @@ export default function ImportScreen() {
   };
 
   const handleVideoSource = () => {
-    // YouTube imports draw from the monthly import-credit pool. When it (plus any
+    // YouTube imports draw from the shared import-credit pool. When it (plus any
     // bonus credits) is spent, send the user straight to the top-up rather than
     // the paste hint — the only buy path for lifetime users (their plan hides the
     // upgrade card). Otherwise open the branded "how to import" sheet.
@@ -1156,6 +1265,14 @@ export default function ImportScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* ── "Scan a photo" sheet (camera / library) ── */}
+      <ScanPhotoSheet
+        visible={scanSheet}
+        onClose={() => setScanSheet(false)}
+        onCamera={handleScanCamera}
+        onLibrary={handleScanLibrary}
+      />
 
       {/* ── "How to import" hint sheet (website / YouTube) ── */}
       <SourceHintSheet
@@ -1812,6 +1929,24 @@ const styles = StyleSheet.create({
   },
   hintPasteText: {
     fontFamily: Fonts.bodyBold,
+    fontSize: 15,
+    color: Colors.parchment,
+  },
+  // Outlined secondary action for the scan sheet ("Choose from Library"),
+  // matching the success sheet's collection button.
+  scanSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    alignSelf: 'stretch',
+    paddingVertical: 15,
+    borderRadius: 50,
+    borderWidth: 1,
+    borderColor: Colors.muted,
+  },
+  scanSecondaryText: {
+    fontFamily: Fonts.bodyMedium,
     fontSize: 15,
     color: Colors.parchment,
   },

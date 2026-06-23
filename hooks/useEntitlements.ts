@@ -56,11 +56,14 @@ export function useEntitlements() {
   const recipeCount = ent?.recipe_count ?? 0;
   const youtubeCredits = ent?.youtube_credits ?? 0;
 
-  // Monthly allowance still remaining (treat a stale anchor as a fresh month),
-  // plus any purchased YouTube credits.
+  // Credits left from the plan's base grant, plus any purchased credits.
+  // Lifetime: 20/month — the counter resets monthly, so a stale anchor reads as 0
+  // used. Free: a ONE-TIME 5 that never resets, so the counter is a lifetime tally
+  // and is read as-is (no month gating).
   const allowance = isLifetime ? YT_ALLOWANCE_LIFETIME : YT_ALLOWANCE_FREE;
-  const usedThisMonth =
-    ent && ent.youtube_month_anchor && ent.youtube_month_anchor >= currentMonthAnchor()
+  const usedThisMonth = !isLifetime
+    ? ent?.youtube_imports_this_month ?? 0
+    : ent && ent.youtube_month_anchor && ent.youtube_month_anchor >= currentMonthAnchor()
       ? ent.youtube_imports_this_month
       : 0;
   const youtubeRemaining = Math.max(0, allowance - usedThisMonth) + youtubeCredits;

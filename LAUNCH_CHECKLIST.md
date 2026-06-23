@@ -98,8 +98,10 @@ What you hit is normal. There are two separate things:
 
 Once **both** the payments profile is active **and** the AAB is uploaded:
 - [ ] **Create the in-app products** (Monetize → Products → In-app products), IDs **exactly**:
-  - `rasoi_lifetime` → type **one-time / non-consumable**, set your price → **Activate**
-  - `rasoi_credits_10` → type **one-time / consumable**, set your price → **Activate**
+  - `rasoi_lifetime` → type **one-time / non-consumable**, price **₹299** → **Activate**
+  - `rasoi_credits_10` → type **one-time / consumable**, price **₹49** → **Activate**
+  - (The app shows Play's real price; `PRODUCT_PRICE_LABEL` in `lib/api/billing.ts` is only a
+    fallback and is already set to ₹299 / ₹49 to match.)
 - [ ] **Set up server-side purchase verification** (so fake purchases can't unlock Pro):
   - In **Google Cloud Console**: create a **service account**, enable the **Google Play Android
     Developer API**, and download the service account's **JSON key**.

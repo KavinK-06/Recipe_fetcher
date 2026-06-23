@@ -51,6 +51,10 @@ export default function SignInScreen() {
   // email/password fields.
   const [twoFactor, setTwoFactor] = useState(false);
   const [code, setCode] = useState('');
+  // Forgot-password flow: 'signin' (default) → 'forgotRequest' (enter email) →
+  // 'forgotReset' (enter the emailed code + a new password).
+  const [mode, setMode] = useState<'signin' | 'forgotRequest' | 'forgotReset'>('signin');
+  const [newPassword, setNewPassword] = useState('');
 
   const submitScale = useSharedValue(1);
   const submitShake = useSharedValue(0);
@@ -171,8 +175,124 @@ export default function SignInScreen() {
     }
   };
 
+  // ── Forgot password: send a reset code to the email ──
+  const handleSendResetCode = async () => {
+    if (!isLoaded) return;
+    if (!email) {
+      shakeError('Enter your email and we’ll send a reset code.');
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await signIn.create({ strategy: 'reset_password_email_code', identifier: email });
+      setCode('');
+      setNewPassword('');
+      setMode('forgotReset');
+    } catch (err: unknown) {
+      if (isClerkAPIResponseError(err)) {
+        shakeError(err.errors[0]?.longMessage ?? err.errors[0]?.message ?? 'Could not send reset code.');
+      } else {
+        shakeError('Something went wrong. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Forgot password: verify the code + set the new password ──
+  const handleResetPassword = async () => {
+    if (!isLoaded) return;
+    if (code.trim().length < 6) {
+      shakeError('Enter the 6-digit code we emailed you.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      shakeError('Your new password must be at least 8 characters.');
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const result = await signIn.attemptFirstFactor({
+        strategy: 'reset_password_email_code',
+        code: code.trim(),
+        password: newPassword,
+      });
+      if (result.status === 'complete') {
+        await setActive({ session: result.createdSessionId });
+        router.replace('/(tabs)');
+        return;
+      }
+      // Account also has 2FA → finish via the existing emailed-code second factor.
+      if (result.status === 'needs_second_factor') {
+        const emailFactor = result.supportedSecondFactors?.find(
+          (f) => f.strategy === 'email_code',
+        );
+        if (!emailFactor) {
+          shakeError('This account uses a second factor this app cannot verify yet.');
+          return;
+        }
+        await signIn.prepareSecondFactor({
+          strategy: 'email_code',
+          emailAddressId: (emailFactor as { emailAddressId: string }).emailAddressId,
+        } as never);
+        setCode('');
+        setMode('signin');
+        setTwoFactor(true);
+        return;
+      }
+      shakeError(`Couldn’t reset your password (status: ${result.status}).`);
+    } catch (err: unknown) {
+      if (isClerkAPIResponseError(err)) {
+        shakeError(err.errors[0]?.longMessage ?? err.errors[0]?.message ?? 'Invalid code or password.');
+      } else {
+        shakeError('Something went wrong. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const backToSignIn = () => {
+    setMode('signin');
+    setTwoFactor(false);
+    setCode('');
+    setNewPassword('');
+    setError(null);
+  };
+
   const borderColor = (field: string) =>
     focusedField === field ? Colors.burgundy : Colors.muted;
+
+  const headingTitle = twoFactor
+    ? 'Two-step verification'
+    : mode === 'signin'
+      ? 'Welcome back'
+      : 'Reset password';
+  const headingSub = twoFactor
+    ? `Enter the 6-digit code we emailed to ${email}.`
+    : mode === 'signin'
+      ? 'Sign in to your Rasoi account'
+      : mode === 'forgotRequest'
+        ? "Enter your email and we'll send a reset code."
+        : `Enter the code we emailed to ${email} and choose a new password.`;
+  const onPrimaryPress = twoFactor
+    ? handleVerifyTwoFactor
+    : mode === 'forgotRequest'
+      ? handleSendResetCode
+      : mode === 'forgotReset'
+        ? handleResetPassword
+        : handleSignIn;
+  const primaryLabel = twoFactor
+    ? 'Verify Code'
+    : mode === 'forgotRequest'
+      ? 'Send reset code'
+      : mode === 'forgotReset'
+        ? 'Reset password'
+        : 'Sign In';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -185,12 +305,8 @@ export default function SignInScreen() {
           <Logo />
 
           <View style={styles.headingWrap}>
-            <Text style={styles.heading}>{twoFactor ? 'Two-step verification' : 'Welcome back'}</Text>
-            <Text style={styles.subheading}>
-              {twoFactor
-                ? `Enter the 6-digit code we emailed to ${email}.`
-                : 'Sign in to your Rasoi account'}
-            </Text>
+            <Text style={styles.heading}>{headingTitle}</Text>
+            <Text style={styles.subheading}>{headingSub}</Text>
           </View>
 
           {twoFactor ? (
@@ -214,6 +330,72 @@ export default function SignInScreen() {
               </View>
 
               <Pressable style={styles.forgotWrap} hitSlop={8} onPress={handleResendTwoFactor}>
+                <Text style={styles.forgotText}>Resend code</Text>
+              </Pressable>
+            </View>
+          ) : mode === 'forgotRequest' ? (
+            <View style={styles.form}>
+              <View style={[styles.inputWrap, { borderColor: borderColor('email') }]}>
+                <Ionicons name="mail-outline" size={16} color={Colors.muted} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Email address"
+                  placeholderTextColor={Colors.mutedText}
+                  value={email}
+                  onChangeText={(v) => { setEmail(v); setError(null); }}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  returnKeyType="done"
+                  onSubmitEditing={handleSendResetCode}
+                  onFocus={() => setFocusedField('email')}
+                  onBlur={() => setFocusedField(null)}
+                  autoFocus
+                />
+              </View>
+            </View>
+          ) : mode === 'forgotReset' ? (
+            <View style={styles.form}>
+              <View style={[styles.inputWrap, { borderColor: borderColor('code') }]}>
+                <Ionicons name="keypad-outline" size={16} color={Colors.muted} />
+                <TextInput
+                  style={[styles.input, { letterSpacing: 6, fontFamily: Fonts.monoBold }]}
+                  placeholder="000000"
+                  placeholderTextColor={Colors.mutedText}
+                  value={code}
+                  onChangeText={(v) => { setCode(v.replace(/\D/g, '').slice(0, 6)); setError(null); }}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  returnKeyType="next"
+                  onFocus={() => setFocusedField('code')}
+                  onBlur={() => setFocusedField(null)}
+                  autoFocus
+                />
+              </View>
+              <View style={[styles.inputWrap, { borderColor: borderColor('newPassword') }]}>
+                <Ionicons name="lock-closed-outline" size={16} color={Colors.muted} />
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder="New password"
+                  placeholderTextColor={Colors.mutedText}
+                  value={newPassword}
+                  onChangeText={(v) => { setNewPassword(v); setError(null); }}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  returnKeyType="done"
+                  onSubmitEditing={handleResetPassword}
+                  onFocus={() => setFocusedField('newPassword')}
+                  onBlur={() => setFocusedField(null)}
+                />
+                <Pressable onPress={() => { Haptics.selectionAsync(); setShowPassword((v) => !v); }} hitSlop={8}>
+                  <Ionicons
+                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={16}
+                    color={Colors.muted}
+                  />
+                </Pressable>
+              </View>
+              <Pressable style={styles.forgotWrap} hitSlop={8} onPress={handleSendResetCode}>
                 <Text style={styles.forgotText}>Resend code</Text>
               </Pressable>
             </View>
@@ -260,7 +442,11 @@ export default function SignInScreen() {
                 </Pressable>
               </View>
 
-              <Pressable style={styles.forgotWrap} hitSlop={8} onPress={() => Haptics.selectionAsync()}>
+              <Pressable
+                style={styles.forgotWrap}
+                hitSlop={8}
+                onPress={() => { Haptics.selectionAsync(); setError(null); setMode('forgotRequest'); }}
+              >
                 <Text style={styles.forgotText}>Forgot password?</Text>
               </Pressable>
             </View>
@@ -271,14 +457,14 @@ export default function SignInScreen() {
           <Animated.View style={[submitShakeStyle, submitScaleStyle]}>
             <Pressable
               style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
-              onPress={twoFactor ? handleVerifyTwoFactor : handleSignIn}
+              onPress={onPrimaryPress}
               disabled={loading}
               onPressIn={() => { submitScale.value = withSpring(0.97, { damping: 14, stiffness: 300 }); }}
               onPressOut={() => { submitScale.value = withSpring(1, { damping: 14, stiffness: 300 }); }}
             >
               {loading
                 ? <ActivityIndicator color={Colors.parchment} />
-                : <Text style={styles.primaryButtonText}>{twoFactor ? 'Verify Code' : 'Sign In'}</Text>}
+                : <Text style={styles.primaryButtonText}>{primaryLabel}</Text>}
             </Pressable>
           </Animated.View>
 
@@ -294,6 +480,12 @@ export default function SignInScreen() {
                 }}
               >
                 <Text style={styles.switchLink}>Use a different account</Text>
+              </Pressable>
+            </View>
+          ) : mode !== 'signin' ? (
+            <View style={styles.switchRow}>
+              <Pressable hitSlop={8} onPress={() => { Haptics.selectionAsync(); backToSignIn(); }}>
+                <Text style={styles.switchLink}>Back to sign in</Text>
               </Pressable>
             </View>
           ) : (

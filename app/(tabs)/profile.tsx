@@ -117,12 +117,14 @@ function YoutubeMeter({
   allowance,
   bonus,
   remaining,
+  isLifetime,
   onGetMore,
 }: {
   used: number;
   allowance: number;
   bonus: number;
   remaining: number;
+  isLifetime: boolean;
   onGetMore: () => void;
 }) {
   const pct = allowance > 0 ? Math.min(used / allowance, 1) : 0;
@@ -142,7 +144,9 @@ function YoutubeMeter({
       <View style={styles.usageRow}>
         <View style={styles.usageLabelRow}>
           <Ionicons name="film-outline" size={14} color={Colors.paprika} />
-          <Text style={styles.usageLabel}>Import credits this month</Text>
+          <Text style={styles.usageLabel}>
+            {isLifetime ? 'Import credits this month' : 'Free credits (one-time)'}
+          </Text>
         </View>
         <Text style={[styles.usageCount, isNearLimit && styles.usageCountWarning]}>
           {used} / {allowance}
@@ -372,13 +376,14 @@ export default function ProfileScreen() {
           </Animated.View>
         )}
 
-        {/* ── YouTube imports meter (free + lifetime: both have a monthly cap) ── */}
+        {/* ── Credits meter (free: one-time 5 · lifetime: 20/month) ── */}
         <Animated.View entering={FadeInDown.delay(90).duration(280).springify()}>
           <YoutubeMeter
             used={youtubeUsedThisMonth}
             allowance={youtubeAllowance}
             bonus={youtubeCredits}
             remaining={youtubeRemaining}
+            isLifetime={isLifetime}
             onGetMore={() => showPaywall('yt_credits', 'out_of_credits')}
           />
         </Animated.View>

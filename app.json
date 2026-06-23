@@ -40,7 +40,14 @@
           "cameraPermission": "Rasoi uses your camera to scan a dish and estimate its calories."
         }
       ],
-      "expo-iap"
+      "expo-iap",
+      [
+        "expo-share-intent",
+        {
+          "androidIntentFilters": ["text/*"],
+          "disableIOS": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

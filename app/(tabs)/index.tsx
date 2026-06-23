@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   FlatList,
   Pressable,
   StyleSheet,
@@ -24,14 +23,11 @@ import type { RecipeRow } from '../../lib/api/import';
 import RecipeCard from '../../components/RecipeCard';
 import RecipeActionsSheet from '../../components/RecipeActionsSheet';
 import SkeletonCard from '../../components/SkeletonCard';
-import TagChip from '../../components/TagChip';
 
 const cookTimeLabel = (mins: number | null) => (mins != null ? `${mins} min` : '—');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = (SCREEN_WIDTH - 48 - 12) / 2;
-
-const COLLECTION_TAGS = ['All', 'Breakfast', 'Dinner', 'Quick Meals', 'Vegan', 'Baking', 'Soups'];
 
 function greeting() {
   const h = new Date().getHours();
@@ -144,7 +140,6 @@ export default function HomeScreen() {
   const isEmpty = !isLoading && recipes.length === 0;
 
   const [menuRecipe, setMenuRecipe] = useState<{ id: string; title: string } | null>(null);
-  const [activeTag, setActiveTag] = useState('All');
 
   const goToRecipe = (id: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -169,8 +164,8 @@ export default function HomeScreen() {
 
   // Everything above the "Your Recipes" grid rides in the FlatList header, so the
   // grid itself stays virtualized (only on-screen cards mount). The horizontal
-  // "Recently Imported" / "Browse" lists are a different orientation, so nesting
-  // them in the header is fine — RN only warns on same-orientation nesting.
+  // "Recently Imported" list is a different orientation, so nesting it in the
+  // header is fine — RN only warns on same-orientation nesting.
   const listHeader = (
     <>
       {/* ── Greeting ── */}
@@ -230,31 +225,9 @@ export default function HomeScreen() {
         <ImportBanner onPress={goToImport} />
       </View>
 
-      {/* ── Collections filter row ── */}
-      <View style={styles.section}>
-        <SectionHeader title="Browse" />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tagRow}
-        >
-          {COLLECTION_TAGS.map((tag) => (
-            <TagChip
-              key={tag}
-              label={tag}
-              variant={activeTag === tag ? 'active' : 'default'}
-              onPress={() => {
-                setActiveTag(tag);
-                Haptics.selectionAsync();
-              }}
-            />
-          ))}
-        </ScrollView>
-      </View>
-
       {/* ── Your Recipes header (grid rows follow as FlatList items) ── */}
       <View style={styles.gridHeader}>
-        <SectionHeader title="Your Recipes" actionLabel="Filter" />
+        <SectionHeader title="Your Recipes" />
       </View>
     </>
   );
@@ -264,9 +237,6 @@ export default function HomeScreen() {
       {/* ── Top bar ── */}
       <View style={styles.topBar}>
         <View style={styles.logoRow}>
-          <View style={styles.logoMark}>
-            <Ionicons name="flame" size={16} color={Colors.saffron} />
-          </View>
           <Text style={styles.logoText}>Rasoi</Text>
         </View>
         <View style={styles.topBarRight}>
@@ -346,16 +316,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  logoMark: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.muted,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   logoText: {
     fontFamily: Fonts.displayBold,
@@ -491,13 +451,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(26,10,14,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-
-  // Collections tag row
-  tagRow: {
-    paddingHorizontal: 20,
-    gap: 8,
-    alignItems: 'center',
   },
 
   // "Your Recipes" header (spacing the grid section used to provide)

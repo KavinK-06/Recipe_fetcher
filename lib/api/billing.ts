@@ -38,7 +38,7 @@ export const IS_CONSUMABLE: Record<Product, boolean> = {
 /** Fallback price labels (display only). The real, localized price comes from the
  *  Play Store via the fetched product's `displayPrice`; these are the backstop. */
 export const PRODUCT_PRICE_LABEL: Record<Product, string> = {
-  lifetime: '₹499',
+  lifetime: '₹299',
   yt_credits: '₹49',
 };
 

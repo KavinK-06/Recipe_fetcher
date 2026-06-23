@@ -24,12 +24,14 @@ import {
 } from '@expo-google-fonts/jetbrains-mono';
 import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ShareIntentProvider } from 'expo-share-intent';
 
 import { Colors } from '../constants/colors';
 import { tokenCache } from '../lib/auth/tokenCache';
 import { useProtectedRoute } from '../hooks/useProtectedRoute';
 import { PaywallProvider } from '../components/PaywallProvider';
 import { PlayBillingProvider } from '../components/PlayBillingProvider';
+import ShareIntentRouter from '../components/ShareIntentRouter';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -54,8 +56,12 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
   }
 
   return (
-    // GestureHandlerRootView must wrap the whole app or any GestureDetector
-    // (e.g. cook mode's swipe-between-steps) throws at render time.
+    // ShareIntentProvider must sit above the navigation so a shared link (YouTube
+    // → Rasoi) is captured on cold start; ShareIntentRouter consumes it and routes
+    // to the Import tab.
+    <ShareIntentProvider options={{ resetOnBackground: true }}>
+    {/* GestureHandlerRootView must wrap the whole app or any GestureDetector
+        (e.g. cook mode's swipe-between-steps) throws at render time. */}
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         {/* PlayBillingProvider wraps PaywallProvider so the (root-level) purchase
@@ -65,6 +71,7 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         <PaywallProvider>
           <View style={{ flex: 1, backgroundColor: Colors.noir }}>
             <StatusBar style="light" />
+            <ShareIntentRouter />
             <Stack
               screenOptions={{
                 headerShown: false,
@@ -89,6 +96,7 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         </PlayBillingProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
+    </ShareIntentProvider>
   );
 }
 

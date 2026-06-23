@@ -38,6 +38,7 @@
 | AI | OpenRouter | default `google/gemini-2.5-flash` (fast structured extraction), fallback `meta-llama/llama-3.3-70b-instruct` |
 | Payments | **Google Play Billing** (`expo-iap`) | One-time in-app products — ₹499 Lifetime Unlock (non-consumable) + ₹49 credit pack (consumable). Native Play sheet → server verifies `purchaseToken` via the Google Play Developer API. (Razorpay removed.) Needs a dev/EAS build — not Expo Go |
 | Import sources | URL scraper (Supadata fallback) · YouTube (transcriptapi.com) · photo OCR | **No social-video imports** — Instagram was removed 2026-06-17; TikTok never had a backend |
+| Share intent | `expo-share-intent` (**Android only**) | "Share → Rasoi" from YouTube (or any app sharing a link) → auto-imports. iOS disabled (`disableIOS`); `androidIntentFilters: ["text/*"]`. **Needs a native rebuild** (not Expo Go). See `components/ShareIntentRouter.tsx` |
 
 ---
 
@@ -59,7 +60,7 @@ Requires `.env.local` (see below). There is no test suite and no lint script con
 ```
 Recipe_fetcher/
 ├── app/                              # Expo Router routes (file = screen)
-│   ├── _layout.tsx                   # ROOT: fonts, ClerkProvider + QueryClientProvider + PlayBillingProvider + PaywallProvider, splash gating, useProtectedRoute, Stack of route groups
+│   ├── _layout.tsx                   # ROOT: fonts, ShareIntentProvider + ClerkProvider + QueryClientProvider + PlayBillingProvider + PaywallProvider, splash gating, useProtectedRoute, Stack of route groups; mounts <ShareIntentRouter/>
 │   ├── index.tsx                     # ENTRY GATE at `/`: owns the first redirect — signed-in → (tabs); never-onboarded → (onboarding)/welcome; onboarded + signed-out → (auth)/sign-in. Renders null (splash held) until BOTH Clerk session + the stored onboarding flag resolve
 │   ├── (onboarding)/
 │   │   └── welcome.tsx               # 3-slide horizontal pager → markOnboardingComplete() (persists the flag) → (auth)/sign-in
@@ -72,7 +73,7 @@ Recipe_fetcher/
 │   │   ├── _layout.tsx               # Bottom tab bar (5 tabs, Import centre raised); gated on useAuth()
 │   │   ├── index.tsx                 # Home feed — REAL data via useRecipes; ONE virtualized FlatList (numColumns=2; header = greeting + recently-imported + banner + browse); per-card 3-dot menu (RecipeActionsSheet); skeletons + empty state
 │   │   ├── search.tsx                # Search + filter panel (cuisine/dietary/cook-time chips)
-│   │   ├── import.tsx                # HERO screen: URL input → useImportRecipe (REAL backend import); idle/loading/success sheet. Free users see a RecipeLimitBanner (X/15; at-cap = tappable lock → recipe_limit paywall) above the input
+│   │   ├── import.tsx                # HERO screen: URL input → useImportRecipe (REAL backend import); idle/loading/success sheet. Free users see a RecipeLimitBanner (X/15; at-cap = tappable lock → recipe_limit paywall) above the input. Scan-a-Photo opens a branded ScanPhotoSheet (camera/library). Also auto-imports a `sharedUrl` route param (from a "Share → Rasoi" intent)
 │   │   ├── collections.tsx           # 2-col collection grid, FAB + new-collection sheet (BottomSheet)
 │   │   └── profile.tsx               # Avatar (real, useUser), plan/usage, settings sections (Features → nutrition scanner), Sign Out (useAuth().signOut)
 │   ├── recipe/[id].tsx               # Recipe detail — REAL via useRecipe (mock fallback); useRecipeImage hero; null-safe meta + string-qty scaling; trash → themed ConfirmDialog → useDeleteRecipe
@@ -95,7 +96,8 @@ Recipe_fetcher/
 │   ├── ProBadge.tsx                  # variants inline|lock|banner for Pro gating
 │   ├── PaywallProvider.tsx           # Context (showPaywall(product?, reason?)/hidePaywall) + mounts the shared PaywallSheet; mounted in app/_layout.tsx. `PaywallReason` = recipe_limit | out_of_credits | upgrade
 │   ├── PaywallSheet.tsx              # Bottom-sheet paywall, REASON-AWARE: recipe_limit → "Recipe limit reached" + Lifetime only + delete-to-free-space hint (credit top-up HIDDEN); out_of_credits → top-up + Lifetime; upgrade → full sheet. Buys via usePlayBilling().buy() (native Play sheet); shows store displayPrice; auto-closes on grant
-│   └── PlayBillingProvider.tsx       # Root-level Google Play Billing (expo-iap useIAP): connection, product fetch, buy(), purchase listener → verifyPlayPurchase → grant → finishTransaction (ack/consume); reconciles unfinished purchases on launch. usePlayBilling() context; wraps PaywallProvider in _layout
+│   ├── PlayBillingProvider.tsx       # Root-level Google Play Billing (expo-iap useIAP): connection, product fetch, buy(), purchase listener → verifyPlayPurchase → grant → finishTransaction (ack/consume); reconciles unfinished purchases on launch. usePlayBilling() context; wraps PaywallProvider in _layout
+│   └── ShareIntentRouter.tsx         # Bridges an Android "Share → Rasoi" (expo-share-intent useShareIntentContext) into the import flow: when signed in, router.push to /(tabs)/import with the shared URL (sharedUrl+sharedAt params) then resetShareIntent(); holds the share through sign-in. Renders null
 │
 ├── constants/
 │   ├── colors.ts                     # Colors (Midnight Spice palette) + ColorKey type
@@ -155,7 +157,7 @@ Recipe_fetcher/
 │   ├── seed.sql                      # Placeholder (comment-only)
 │   └── .temp/                        # Supabase CLI scratch (linked-project ref) — ignore
 │
-├── app.json                          # Expo config: name Rasoi, scheme rasoi, dark UI, plugins, extra (env → EAS)
+├── app.json                          # Expo config: name Rasoi, scheme rasoi, dark UI, plugins (incl. expo-share-intent — Android text/* share target, disableIOS), extra (env → EAS)
 ├── babel.config.js                   # babel-preset-expo (jsxImportSource nativewind) + nativewind/babel
 ├── metro.config.js                   # withNativeWind(config, { input: './global.css' })
 ├── tailwind.config.js                # Midnight Spice colors, font families, radii (card/chip/pill)
@@ -191,6 +193,8 @@ recipe/[id]          → cook/[id]                        [Start Cooking]
 ```
 
 Auth flow: cold launch → splash held until **fonts AND Clerk `isLoaded`** → `/` entry gate also waits on the **stored onboarding flag** (`lib/onboarding.ts`), then routes once: signed-in → `/(tabs)`; first-ever launch → `/(onboarding)/welcome`; onboarded-but-signed-out → `/(auth)/sign-in` (no wrong-screen flash). Session persists via `expo-secure-store`; onboarding is shown exactly once per install.
+
+**External entry — share intent (Android):** a "Share → Rasoi" of a link (YouTube, browser, etc.) is captured by `ShareIntentProvider` and handled by `ShareIntentRouter` → `router.push` to `/(tabs)/import` with a `sharedUrl` param, which auto-runs the import. A share that lands while signed-out is held until Clerk resolves, so the link survives the sign-in detour. (Android-only by design; needs a native rebuild.)
 
 ---
 

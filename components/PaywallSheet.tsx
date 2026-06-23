@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useAuth } from '@clerk/clerk-expo';
+import { useAuth, useUser } from '@clerk/clerk-expo';
 import { useQueryClient } from '@tanstack/react-query';
 import { Colors } from '../constants/colors';
 import { Fonts } from '../constants/fonts';
@@ -21,6 +21,11 @@ import BottomSheet from './BottomSheet';
 // Keep in sync with gating.ts / useEntitlements.ts (imported as a hook there would
 // create a provider import cycle, so the cap is mirrored as a plain constant).
 const FREE_RECIPE_LIMIT = 15;
+// Value-card tuning: a conservative estimate of the time each captured recipe
+// saves vs. manually scrubbing a cooking video / digging a recipe out of a long
+// blog post. The recap scales with recipes the user actually captured, so the
+// figure is their own — not a fixed number shown to everyone.
+const MINUTES_SAVED_PER_RECIPE = 8;
 
 interface Props {
   visible: boolean;
@@ -38,6 +43,7 @@ const LIFETIME_PERKS = [
 
 export default function PaywallSheet({ visible, reason, onClose }: Props) {
   const { userId } = useAuth();
+  const { user } = useUser();
   const queryClient = useQueryClient();
   const { connected, productsByKey, busyProduct, lastGrant, buy } = usePlayBilling();
 
@@ -50,6 +56,17 @@ export default function PaywallSheet({ visible, reason, onClose }: Props) {
   } | null>(['entitlements', userId]);
   const isLifetime = cachedEntitlement?.plan === 'lifetime';
   const recipeCount = cachedEntitlement?.recipe_count ?? FREE_RECIPE_LIMIT;
+
+  // Value-recap stats for the out-of-credits card. Lead with what the user GAINED
+  // (time saved) so the moment reads as a reward, not a sales wall. Personalised
+  // with their first name + their own real numbers.
+  const firstName = user?.firstName ?? null;
+  const recipesCaptured = cachedEntitlement?.recipe_count ?? 0;
+  // Time saved scales with recipes actually captured — every one is a video the
+  // user didn't scrub or a blog they didn't scroll — so the number varies per
+  // user instead of pinning at a flat figure. Floored at one recipe's worth so a
+  // scans-only user (no saved recipes) still sees a real number, not zero.
+  const minutesSaved = Math.max(recipesCaptured, 1) * MINUTES_SAVED_PER_RECIPE;
 
   // Prefer the Play Store's localized price; fall back to the ₹ label if products
   // haven't loaded yet (or we're not connected).
@@ -68,13 +85,13 @@ export default function PaywallSheet({ visible, reason, onClose }: Props) {
     : isLifetime
       ? 'Top up credits'
       : isOutOfCredits
-        ? 'Out of credits'
+        ? "You're on a roll"
         : 'Unlock Rasoi';
 
   const intro = isRecipeLimit
     ? `Your free plan holds ${FREE_RECIPE_LIMIT} saved recipes — you're at ${recipeCount} / ${FREE_RECIPE_LIMIT}.`
     : isOutOfCredits && !isLifetime
-      ? "You've used all your monthly import credits — top up to keep importing."
+      ? "You've used all your free credits — top up to keep importing."
       : null;
 
   // Close the sheet once a purchase has been verified + granted (PlayBillingProvider
@@ -102,8 +119,14 @@ export default function PaywallSheet({ visible, reason, onClose }: Props) {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-            {/* Plain-language reason so the user knows WHY they hit the wall. */}
-            {intro && <Text style={styles.intro}>{intro}</Text>}
+            {/* Out-of-credits free users get a personalised value recap (time saved)
+                instead of a plain "you're out" line — reward first, options second.
+                Other walls keep the plain-language reason. */}
+            {isOutOfCredits && !isLifetime ? (
+              <ValueCard name={firstName} recipes={recipesCaptured} minutes={minutesSaved} />
+            ) : intro ? (
+              <Text style={styles.intro}>{intro}</Text>
+            ) : null}
 
             {/* Lifetime owners skip the upgrade hero — they already own it and just
                 need consumable top-ups (extra YouTube imports / AI scans). */}
@@ -230,6 +253,61 @@ function TopUpCard({
         )}
       </View>
     </Pressable>
+  );
+}
+
+// ── Value recap card (out of credits) ───────────────────────────────────────
+function formatDuration(min: number): string {
+  if (min < 60) return `${min} minutes`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m === 0 ? `${h} ${h === 1 ? 'hour' : 'hours'}` : `${h}h ${m}m`;
+}
+
+function kickerForMinutes(min: number): string {
+  if (min >= 120) return "That's a whole movie you never had to sit through. 🍿";
+  if (min >= 60) return "That's a full episode back in your evening.";
+  if (min >= 30) return "That's your commute home, handed back to you.";
+  return 'Those saved minutes add up fast.';
+}
+
+/**
+ * Personalised "here's what you gained" card shown when a free user runs out of
+ * credits. Uses their first name + their own real numbers (recipes captured, time
+ * saved) so it reads as a reward, not a generic upsell shown to everyone.
+ */
+function ValueCard({
+  name,
+  recipes,
+  minutes,
+}: {
+  name: string | null;
+  recipes: number;
+  minutes: number;
+}) {
+  return (
+    <View style={styles.valueCard}>
+      <View style={styles.valueHeader}>
+        <View style={styles.valueIconWrap}>
+          <Ionicons name="sparkles" size={15} color={Colors.saffron} />
+        </View>
+        <Text style={styles.valueHeadline}>
+          {name ? `${name}, your kitchen's been busy` : "Your kitchen's been busy"}
+        </Text>
+      </View>
+      <Text style={styles.valueBody}>
+        Rasoi has saved you roughly{' '}
+        <Text style={styles.valueAccent}>{formatDuration(minutes)}</Text> of scrubbing through
+        videos and hunting down the actual recipe.
+      </Text>
+      {recipes > 0 ? (
+        <Text style={styles.valueBody}>
+          That's <Text style={styles.valueAccent}>{recipes} recipe{recipes === 1 ? '' : 's'}</Text>{' '}
+          captured and ready whenever you cook.
+        </Text>
+      ) : null}
+      <Text style={styles.valueKicker}>{kickerForMinutes(minutes)}</Text>
+    </View>
   );
 }
 
@@ -385,4 +463,45 @@ const styles = StyleSheet.create({
 
   secureRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   secureText: { fontFamily: Fonts.bodyRegular, fontSize: 12, color: Colors.mutedText },
+
+  // Value-recap card (shown when a free user is out of credits)
+  valueCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.burgundy,
+    padding: 16,
+    gap: 8,
+  },
+  valueHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  valueIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: `${Colors.saffron}1A`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  valueHeadline: {
+    flex: 1,
+    fontFamily: Fonts.displaySemiBold,
+    fontSize: 16,
+    color: Colors.parchment,
+  },
+  valueBody: {
+    fontFamily: Fonts.bodyRegular,
+    fontSize: 14,
+    lineHeight: 20,
+    color: Colors.mutedText,
+  },
+  valueAccent: {
+    fontFamily: Fonts.bodyBold,
+    color: Colors.saffron,
+  },
+  valueKicker: {
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 13,
+    color: Colors.parchment,
+    marginTop: 2,
+  },
 });

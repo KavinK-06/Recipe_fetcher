@@ -2,15 +2,20 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { HttpError } from './http.ts';
 
 // ── Pricing-model limits ─────────────────────────────────────────────────────
-// Free: 15 saved recipes, unlimited URL imports, 5 monthly credits.
-// Lifetime: unlimited saved recipes, 20 monthly credits.
+// Free: 15 saved recipes, unlimited URL imports, 5 ONE-TIME credits (granted once,
+//       never reset).
+// Lifetime: unlimited saved recipes, 20 credits per month (reset monthly).
 // One shared "credit" pool covers every metered action: a captioned YouTube
-// import (1) and a calorie scan (1). Spend draws the monthly allowance first,
+// import (1) and a calorie scan (1). Spend draws the plan's base grant first,
 // then purchased `youtube_credits`. (The 15-recipe cap gates URL/photo imports
 // only — the credit pool is independent of it.)
+//
+// Implementation note: `youtube_imports_this_month` is the usage counter against
+// the base grant. For LIFETIME it resets monthly (see enforceCreditGate); for
+// FREE it is never reset, so it acts as a lifetime tally against the one-time 5.
 const FREE_RECIPE_LIMIT = 15;
-const YT_ALLOWANCE_FREE = 5;
-const YT_ALLOWANCE_LIFETIME = 20;
+const YT_ALLOWANCE_FREE = 5;      // one-time grant for free users (no monthly reset)
+const YT_ALLOWANCE_LIFETIME = 20; // per-month grant for lifetime users
 
 export interface Entitlement {
   plan: 'free' | 'lifetime';
@@ -123,7 +128,8 @@ export interface CreditGate {
   cost: number;
 }
 
-/** Remaining monthly allowance credits for the entitlement (never negative). */
+/** Remaining credits from the plan's base grant (lifetime: 20/month, free:
+ *  one-time 5) — never negative. */
 function allowanceLeft(ent: Entitlement): number {
   const allowance = ent.isLifetime ? YT_ALLOWANCE_LIFETIME : YT_ALLOWANCE_FREE;
   return Math.max(0, allowance - ent.youtubeImportsThisMonth);
@@ -148,10 +154,11 @@ export async function enforceCreditGate(
 ): Promise<CreditGate> {
   let ent = await loadEntitlement(supabase, userId);
 
-  // Monthly rollover: reset the counter when the anchor is missing or in a prior
-  // month. Persist it now — a reset is correct regardless of the action outcome.
+  // Monthly rollover applies to LIFETIME only — their 20 credits refresh each
+  // month. Free users get a ONE-TIME 5-credit grant that never resets, so their
+  // counter is a lifetime tally; skip the reset for them entirely.
   const thisMonth = currentMonthAnchor();
-  if (!ent.youtubeMonthAnchor || ent.youtubeMonthAnchor < thisMonth) {
+  if (ent.isLifetime && (!ent.youtubeMonthAnchor || ent.youtubeMonthAnchor < thisMonth)) {
     const { error } = await supabase
       .from('entitlements')
       .update({ youtube_imports_this_month: 0, youtube_month_anchor: thisMonth })
