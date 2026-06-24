@@ -89,10 +89,16 @@ export default function IngredientRow({
           {/* Strikethrough overlay */}
           <Animated.View style={[styles.strike, strikeAnimStyle]} />
         </View>
-        <Text style={styles.quantity}>
-          {quantity}
-          {unit ? ` ${unit}` : ''}
-        </Text>
+        {quantity || unit ? (
+          <Text style={styles.quantity}>
+            {quantity}
+            {unit ? ` ${unit}` : ''}
+          </Text>
+        ) : (
+          // No amount given (e.g. "some onions", "a sprinkle") — show a soft,
+          // muted hint instead of a blank so the column never looks empty.
+          <Text style={styles.quantityNone}>as needed</Text>
+        )}
       </Animated.View>
     </Pressable>
   );
@@ -151,6 +157,12 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.monoRegular,
     fontSize: 12,
     color: Colors.saffron,
+    flexShrink: 0,
+  },
+  quantityNone: {
+    fontFamily: Fonts.monoRegular,
+    fontSize: 11,
+    color: Colors.mutedText,
     flexShrink: 0,
   },
 });

@@ -82,7 +82,9 @@ Deno.serve(async (req: Request) => {
         userPrompt: USER_PROMPT,
         images: [image],
         responseFormat: 'text',
-        maxTokens: 1500,
+        // Richer 40–60 word steps (up to ~12) need more headroom; too low a cap
+        // truncates the reply mid-JSON and the parse fails.
+        maxTokens: 3500,
       });
     } catch (err) {
       console.error(`[${TAG}] extraction failed:`, err);
@@ -147,7 +149,9 @@ const USER_PROMPT =
   '"tags": string[], "imageUrl": null }\n' +
   'cookTime/prepTime are integer minutes or null. servings is an integer or ' +
   'null. tags are 3-6 lowercase one-word labels. Transcribe quantities exactly ' +
-  'as written. STEP STRUCTURE: organise the method into clear titled steps — aim ' +
+  'as written. If an ingredient has no written amount, set its quantity to a ' +
+  'natural phrase like "to taste" or "as needed" rather than leaving it blank. ' +
+  'STEP STRUCTURE: organise the method into clear titled steps — aim ' +
   'for 6 to 10 as a GROUPING guideline for how many cards to show, NOT a content ' +
   'limit. Bundle closely-related actions into one step, and group all prep ' +
   '(chopping, measuring) into one step titled "Prep" at the start. A simple recipe ' +
@@ -157,7 +161,13 @@ const USER_PROMPT =
   'steps; a step\'s "instruction" may be several sentences, and the step count ' +
   'always yields to keeping all the detail. Give every step a "title" of one to ' +
   'three words naming the stage (e.g. "Temper the spices", "Rest the dough") — ' +
-  'NOT the full sentence, which goes in "instruction". ' +
+  'NOT the full sentence, which goes in "instruction". INSTRUCTION DETAIL: write ' +
+  'each "instruction" as ~40 to 60 words a beginner can follow — the exact action, ' +
+  'the heat level/technique, and ALWAYS a concrete observable doneness cue (colour, ' +
+  'smell, texture or sound) plus an approximate time. NEVER use vague language like ' +
+  '"cook until done" — give an indicator the user can see, smell, hear or feel. You ' +
+  'may add standard cooking cues, techniques and typical times to make a step ' +
+  'observable, but do not invent ingredients or steps that are not in the photo. ' +
   'If the photo has no readable recipe, return {"title":"", ' +
   '"ingredients":[], "steps":[]}.';
 

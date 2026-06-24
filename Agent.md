@@ -312,7 +312,7 @@ eas update --branch production --message "hotfix ..."  # → production users
 - A build must ship **with `expo-updates` baked in** before it can receive any OTA — the first `eas build` per channel after this setup is mandatory.
 - Edge-function (Deno) changes are **separate** — `supabase functions deploy <name>`, never part of an app build or OTA.
 
-> Caveat: `expo-share-intent@7.0.0` targets Expo SDK ^56 but the app is on SDK 54 (build warns, iOS module disabled — iOS is `disableIOS: true` anyway). It has worked on Android in a preview build; pin to the `6.x` line for the officially-supported SDK-54 version if a future build misbehaves.
+> `expo-share-intent` is **pinned to `^5.1.1`** — the SDK-54 line (`expo ^54`, `expo-constants ~18`, `expo-linking ~8`). Do NOT bump to 6.x (SDK 55) or 7.x (SDK 56): those pull nested SDK-56 `expo-constants`/`expo-linking`, which `expo-doctor` flags as duplicate native modules and breaks the build. Move it up only in lockstep with an Expo SDK upgrade (6.x ↔ SDK 55, 7.x ↔ SDK 56).
 
 ---
 

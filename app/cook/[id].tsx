@@ -13,7 +13,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useKeepAwake } from 'expo-keep-awake';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, ScrollView } from 'react-native-gesture-handler';
 import Svg, { Circle } from 'react-native-svg';
 import Animated, {
   useSharedValue,
@@ -531,39 +531,48 @@ export default function CookModeScreen() {
       {/* ── Swipeable step body ── */}
       <GestureDetector gesture={panGesture}>
         <Animated.View style={[styles.cardWrap, cardAnimStyle]}>
-          <View style={styles.stepHeader}>
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepBadgeText}>{stepIndex + 1}</Text>
+          {/* Vertical scroll for long (40–60 word) steps; the horizontal
+              swipe-between-steps pan still wins because it only activates on
+              horizontal movement (activeOffsetX). */}
+          <ScrollView
+            style={styles.cardScroll}
+            contentContainerStyle={styles.cardScrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.stepHeader}>
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepBadgeText}>{stepIndex + 1}</Text>
+              </View>
+              <Text style={styles.stepMeta}>Step {stepIndex + 1}</Text>
             </View>
-            <Text style={styles.stepMeta}>Step {stepIndex + 1}</Text>
-          </View>
 
-          {/* Bold glanceable title + full instruction, grouped tightly so the
-              title reads as the label for the sentence below it. */}
-          <View style={styles.stepTextBlock}>
-            {currentStep.title ? (
-              <Text style={styles.stepTitle}>{currentStep.title}</Text>
-            ) : null}
-            <Text style={styles.instruction}>{currentStep.text}</Text>
-          </View>
-
-          {/* Ingredient callout (mock recipes only carry per-step ingredients) */}
-          {currentStep.ingredients.length > 0 && (
-            <IngredientCallout items={currentStep.ingredients} />
-          )}
-
-          {/* Timer (if any) */}
-          {currentStep.timerSeconds != null && currentStep.timerSeconds > 0 && (
-            <View style={styles.timerWrap}>
-              <CookTimer
-                totalSeconds={currentStep.timerSeconds}
-                remaining={timerRemaining}
-                isRunning={timerRunning}
-                onToggle={handleToggleTimer}
-                onReset={handleResetTimer}
-              />
+            {/* Bold glanceable title + full instruction, grouped tightly so the
+                title reads as the label for the sentence below it. */}
+            <View style={styles.stepTextBlock}>
+              {currentStep.title ? (
+                <Text style={styles.stepTitle}>{currentStep.title}</Text>
+              ) : null}
+              <Text style={styles.instruction}>{currentStep.text}</Text>
             </View>
-          )}
+
+            {/* Ingredient callout (mock recipes only carry per-step ingredients) */}
+            {currentStep.ingredients.length > 0 && (
+              <IngredientCallout items={currentStep.ingredients} />
+            )}
+
+            {/* Timer (if any) */}
+            {currentStep.timerSeconds != null && currentStep.timerSeconds > 0 && (
+              <View style={styles.timerWrap}>
+                <CookTimer
+                  totalSeconds={currentStep.timerSeconds}
+                  remaining={timerRemaining}
+                  isRunning={timerRunning}
+                  onToggle={handleToggleTimer}
+                  onReset={handleResetTimer}
+                />
+              </View>
+            )}
+          </ScrollView>
         </Animated.View>
       </GestureDetector>
 
@@ -727,8 +736,14 @@ const styles = StyleSheet.create({
   // Step card
   cardWrap: {
     flex: 1,
+  },
+  cardScroll: {
+    flex: 1,
+  },
+  cardScrollContent: {
     paddingHorizontal: 20,
     paddingTop: 12,
+    paddingBottom: 24,
     gap: 20,
   },
   stepHeader: {

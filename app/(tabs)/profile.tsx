@@ -291,9 +291,13 @@ export default function ProfileScreen() {
   const handleContactSupport = async () => {
     const subject = encodeURIComponent(`Rasoi support (v${APP_VERSION})`);
     const url = `mailto:${SUPPORT_EMAIL}?subject=${subject}`;
+    // Open directly — do NOT gate on Linking.canOpenURL. On Android 11+ a slim
+    // standalone build can't "see" the mail app without a <queries> manifest
+    // entry, so canOpenURL returns false even when Gmail is installed (it only
+    // works in Expo Go because the dev client declares broad query visibility).
+    // openURL still launches the mail app and only throws when there's truly no
+    // handler, which the catch covers.
     try {
-      const canOpen = await Linking.canOpenURL(url);
-      if (!canOpen) throw new Error('no mail client');
       await Linking.openURL(url);
     } catch {
       Alert.alert('No email app found', `You can reach us at ${SUPPORT_EMAIL}.`);
